@@ -48,7 +48,7 @@ Lockfiles change constantly. A package might be clean today, but was compromised
 ### 🥉 3. Proactive "Wargaming" (Attack Path Prediction)
 Don't wait for a breach. HydraGuard acts as a proactive threat-modeling tool.
 * **The Magic:** Using graph centrality algorithms, we identify the "crown jewels" of your supply chain—the obscure transitive dependencies that hold your infrastructure together.
-* **The Result:** A **"Detonate"** button in the UI. Click a deeply buried package, and watch the graph visually explode outward, calculating that a theoretical compromise here would take down 98% of your critical services.
+* **The Result:** A **"Detonate"** button in the UI. Click a deeplyy buried package, and watch the graph visually explode outward, calculating that a theoretical compromise here would take down 98% of your critical services.
 
 ---
 
