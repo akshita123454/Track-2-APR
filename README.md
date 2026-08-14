@@ -1,7 +1,7 @@
 <div align="center">
   <h1>🛡️ HydraGuard</h1>
   <p><strong>Instant Supply Chain Blast Radius & Reachability Analysis</strong></p>
-  <p><i>A submission for the <a href="https://hackhydra.hydradb.com/">HackHydra Hackathon (Aug 12-20, 2026)</a> — Track 02 (Option A)</i></p>
+ 
 
   <p>
     <a href="#-the-problem"><img src="https://img.shields.io/badge/Status-Active_Development-orange.svg" alt="Status" /></a>
