@@ -98,4 +98,4 @@ HydraGuard/
 3. Start UI: `cd dashboard && npm run dev`
 
 ---
-*Built with ❤️ for the HackHydra 2026 Hackathon.*
+
