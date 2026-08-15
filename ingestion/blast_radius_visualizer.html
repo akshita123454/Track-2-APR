@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HackHydra - Blast Radius Live Graph</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; }
+        #header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
+        h1 { color: #ff5722; margin: 0; font-size: 24px; }
+        .badge { background: #ff5722; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        #network { width: 100%; height: 600px; border: 1px solid #30363d; border-radius: 8px; background: #000000; }
+        .alert-box { background: rgba(255, 87, 34, 0.1); border: 1px solid #ff5722; padding: 15px; border-radius: 8px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <div>
+            <h1>🛡️ Supply Chain Blast Radius Monitor</h1>
+            <p>Incident Target: <strong style="color:#ff5722;">hacked-logger</strong> (COMPROMISED)</p>
+        </div>
+        <div>
+            <span class="badge">LIVE GRAPH ENGINE</span>
+        </div>
+    </div>
+
+    <div id="network"></div>
+
+    <div class="alert-box">
+        <h3>🚨 Incident Summary:</h3>
+        <p>• <strong>Transitively Exposed Applications:</strong> 2</p>
+        <p>• <strong>Detected Typosquat Candidates:</strong> 1</p>
+    </div>
+
+    <script type="text/javascript">
+        var nodes = new vis.DataSet([
+            // Compromised root node
+            { id: "hacked-logger", label: "hacked-logger\n(HACKED PKG)", color: "#ff1744", font: { color: "white" }, shape: "box", size: 30 },
+            
+            // Intermediary packages
+            { id: "router-core", label: "router-core\n(infected)", color: "#ff5722", font: { color: "white" }, shape: "box" },
+            { id: "tanstack-router", label: "tanstack-router\n(infected)", color: "#ff9800", font: { color: "white" }, shape: "box" },
+            { id: "url-utils", label: "url-utils\n(safe)", color: "#4caf50", font: { color: "white" }, shape: "box" },
+            { id: "auth-helper", label: "auth-helper\n(safe)", color: "#4caf50", font: { color: "white" }, shape: "box" },
+            
+            // Applications
+            { id: "Production-Payment-API", label: "⚡ Production-Payment-API\n[CRITICAL EXPOSURE]", color: "#d50000", font: { color: "white", size: 14 }, shape: "ellipse" },
+            { id: "Customer-Dashboard", label: "⚡ Customer-Dashboard\n[CRITICAL EXPOSURE]", color: "#d50000", font: { color: "white", size: 14 }, shape: "ellipse" },
+            { id: "Internal-Admin-Portal", label: "Internal-Admin-Portal\n[SAFE]", color: "#2e7d32", font: { color: "white" }, shape: "ellipse" }
+        ]);
+
+        var edges = new vis.DataSet([
+            { from: "router-core", to: "hacked-logger", arrows: "to", color: { color: "#ff1744" }, width: 3, label: "depends on" },
+            { from: "tanstack-router", to: "router-core", arrows: "to", color: { color: "#ff5722" }, width: 3, label: "depends on" },
+            { from: "tanstack-router", to: "url-utils", arrows: "to", color: { color: "#30363d" } },
+            { from: "Production-Payment-API", to: "tanstack-router", arrows: "to", color: { color: "#d50000" }, width: 4, label: "uses" },
+            { from: "Customer-Dashboard", to: "tanstack-router", arrows: "to", color: { color: "#d50000" }, width: 4, label: "uses" },
+            { from: "Customer-Dashboard", to: "auth-helper", arrows: "to", color: { color: "#30363d" } },
+            { from: "Internal-Admin-Portal", to: "url-utils", arrows: "to", color: { color: "#2e7d32" } }
+        ]);
+
+        var container = document.getElementById("network");
+        var data = { nodes: nodes, edges: edges };
+        var options = {
+            physics: {
+                stabilization: true,
+                barnesHut: { springLength: 150, nodeDistance: 200 }
+            }
+        };
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+</html>
