@@ -1,16 +1,24 @@
 """
-HackHydra 2026 - Track 2A: Supply Chain Blast Radius Demo Engine
-This script models an npm dependency graph, simulates a package compromise,
-and calculates the full transitive blast radius, maintainer risk, and typosquats.
+=============================================================================
+🛡️ HackHydra 2026 - Track 2A: Supply Chain Blast Radius Demo Engine
+=============================================================================
+This script does 4 main things:
+  1. Stores an npm dependency graph (Packages, Maintainers, Applications).
+  2. Traverses the graph to find every application transitively infected.
+  3. Detects typosquatting and shared maintainer risk.
+  4. Generates an interactive HTML graph and AUTOMATICALLY opens your browser!
+=============================================================================
 """
 
 import json
 import os
+import webbrowser  # <-- Built-in Python library to automatically pop open your browser!
 from datetime import datetime
 
-# -------------------------------------------------------------
-# 1. REALISTIC NPM DEPENDENCY DATASET (Simulated for Demo)
-# -------------------------------------------------------------
+# =============================================================================
+# 📦 SECTION 1: THE DEPENDENCY DATASET (Our Graph Data)
+# =============================================================================
+# In HydraDB, these become NODES (circles) and EDGES (connecting arrows).
 SAMPLE_DATA = {
     "packages": [
         {
@@ -19,15 +27,15 @@ SAMPLE_DATA = {
             "maintainer": "alice_dev",
             "published_at": "2026-05-11T09:00:00Z",
             "downloads_weekly": 1200000,
-            "dependencies": ["router-core", "url-utils"]
+            "dependencies": ["router-core", "url-utils"]  # Needs router-core and url-utils to work
         },
         {
             "name": "router-core",
             "version": "2.1.0",
-            "maintainer": "alice_dev",  # Shares maintainer with tanstack-router!
+            "maintainer": "alice_dev",                    # Shares maintainer with tanstack-router!
             "published_at": "2026-04-10T12:00:00Z",
             "downloads_weekly": 800000,
-            "dependencies": ["hacked-logger"]
+            "dependencies": ["hacked-logger"]            # Needs hacked-logger to work!
         },
         {
             "name": "url-utils",
@@ -35,11 +43,11 @@ SAMPLE_DATA = {
             "maintainer": "bob_smith",
             "published_at": "2026-03-01T10:00:00Z",
             "downloads_weekly": 450000,
-            "dependencies": []
+            "dependencies": []                            # Has 0 dependencies (Safe endpoint)
         },
         {
-            "name": "hacked-logger",
-            "version": "3.0.1",  # THE COMPROMISED PACKAGE!
+            "name": "hacked-logger",                      # 🚨 THE COMPROMISED / POISONED PACKAGE!
+            "version": "3.0.1",
             "maintainer": "evil_actor",
             "published_at": "2026-05-11T09:02:00Z",
             "downloads_weekly": 3500000,
@@ -54,7 +62,7 @@ SAMPLE_DATA = {
             "dependencies": []
         },
         {
-            "name": "tanstck-router",  # TYPOSQUAT TRAP!
+            "name": "tanstck-router",                     # 🎯 A FAKE LOOKALIKE (TYPOSQUAT TRAP)!
             "version": "1.0.0",
             "maintainer": "unknown_actor",
             "published_at": "2026-05-10T22:00:00Z",
@@ -62,11 +70,12 @@ SAMPLE_DATA = {
             "dependencies": []
         }
     ],
+    # These represent internal microservices and apps inside your company:
     "internal_applications": [
         {
             "app_name": "Production-Payment-API",
             "environment": "production",
-            "direct_dependencies": ["tanstack-router"]
+            "direct_dependencies": ["tanstack-router"]     # App directly installs tanstack-router
         },
         {
             "app_name": "Customer-Dashboard",
@@ -76,39 +85,56 @@ SAMPLE_DATA = {
         {
             "app_name": "Internal-Admin-Portal",
             "environment": "staging",
-            "direct_dependencies": ["url-utils"]
+            "direct_dependencies": ["url-utils"]           # App only installs safe url-utils
         }
     ]
 }
 
-# -------------------------------------------------------------
-# 2. BLAST RADIUS GRAPH ENGINE
-# -------------------------------------------------------------
+
+# =============================================================================
+# 🧠 SECTION 2: THE GRAPH TRAVERSAL & BLAST RADIUS ENGINE
+# =============================================================================
 class SupplyChainGraph:
+    """
+    This class simulates what HydraDB does with Cypher queries.
+    It walks along dependency arrows to find all reachable paths.
+    """
     def __init__(self, data):
-        self.packages = {p["name"]: p for p in data["packages"]}
+        # Store packages in a fast dictionary by their name
+        self.packages = {pkg["name"]: pkg for pkg in data["packages"]}
         self.apps = data["internal_applications"]
 
     def find_blast_radius(self, compromised_pkg_name):
-        """Walks backwards along dependency edges to find all affected apps and chains."""
+        """
+        Answers Problem Statement Question 1:
+        'Which internal services are transitively exposed?'
+        """
         results = []
 
+        # Check every application owned by our company
         for app in self.apps:
-            # Check every direct dependency of the app
+            # Check every package that this application directly installs
             for direct_dep in app["direct_dependencies"]:
+                # Recursively trace if this dependency leads to the hacked package
                 chain = self._trace_path(direct_dep, compromised_pkg_name, [app["app_name"]])
                 if chain:
                     results.append({
                         "app_name": app["app_name"],
                         "environment": app["environment"],
                         "chain": chain,
-                        "hop_count": len(chain) - 1
+                        "hop_count": len(chain) - 1  # How many steps away from the hack
                     })
         return results
 
     def _trace_path(self, current_pkg, target_pkg, current_path):
-        """Recursive graph traversal (simulates Cypher MATCH -[:DEPENDS_ON*]->)."""
+        """
+        Recursive helper function:
+        Walks: App -> Pkg A -> Pkg B -> Hacked Package
+        (This is exactly what HydraDB's Cypher query: MATCH path = (app)-[:DEPENDS_ON*]->(bad) does!)
+        """
         path = current_path + [current_pkg]
+        
+        # If we reached the hacked package, we found an infection path!
         if current_pkg == target_pkg:
             return path
         
@@ -116,6 +142,7 @@ class SupplyChainGraph:
         if not pkg_data:
             return None
 
+        # Look into the sub-dependencies of this package
         for dep in pkg_data.get("dependencies", []):
             sub_path = self._trace_path(dep, target_pkg, path)
             if sub_path:
@@ -123,12 +150,17 @@ class SupplyChainGraph:
         return None
 
     def find_shared_maintainer_risks(self, compromised_pkg_name):
-        """Identifies other packages published by the same maintainers."""
+        """
+        Answers Problem Statement Question 4:
+        'Which other packages share maintainers or infrastructure with it?'
+        If a maintainer's account was hacked, all their other packages are at risk!
+        """
         compromised = self.packages.get(compromised_pkg_name)
         if not compromised:
             return []
         
         maintainer = compromised["maintainer"]
+        # Find all other packages created by the same person
         shared_pkgs = [
             p for p in self.packages.values()
             if p["maintainer"] == maintainer and p["name"] != compromised_pkg_name
@@ -136,8 +168,13 @@ class SupplyChainGraph:
         return shared_pkgs
 
     def detect_typosquats(self, target_pkg_name):
-        """Finds similarly named packages using Levenshtein distance."""
+        """
+        Answers Problem Statement Question 5:
+        'Are there likely typosquat packages nearby?'
+        Uses the Levenshtein Distance (edit distance) algorithm to find lookalikes.
+        """
         def levenshtein(s1, s2):
+            # Calculates how many character changes separate word 1 from word 2
             if len(s1) < len(s2):
                 return levenshtein(s2, s1)
             if len(s2) == 0:
@@ -157,7 +194,8 @@ class SupplyChainGraph:
         for name in self.packages:
             if name != target_pkg_name:
                 dist = levenshtein(target_pkg_name, name)
-                if dist <= 2:  # Edit distance 1 or 2
+                # If the name is only 1 or 2 letters different, it is a high-risk typosquat!
+                if dist <= 2:
                     typos.append({
                         "name": name,
                         "distance": dist,
@@ -165,60 +203,135 @@ class SupplyChainGraph:
                     })
         return typos
 
-# -------------------------------------------------------------
-# 3. HTML VISUAL GRAPH GENERATOR (Opens in Browser!)
-# -------------------------------------------------------------
+
+# =============================================================================
+# 🎨 SECTION 3: HTML VISUAL GRAPH GENERATOR (With Vis.js)
+# =============================================================================
 def export_html_visualizer(compromised_name, blast_results, typosquats):
+    """
+    Generates a beautiful, dark-mode interactive HTML file.
+    The graph colors infected nodes in RED/ORANGE and safe nodes in GREEN.
+    """
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>HackHydra - Blast Radius Live Graph</title>
+    <meta charset="utf-8">
+    <title>HackHydra - Supply Chain Blast Radius Graph</title>
+    <!-- We load Vis.js: a powerful open-source graph animation library -->
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
-        body {{ background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; }}
-        #header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }}
-        h1 {{ color: #ff5722; margin: 0; font-size: 24px; }}
-        .badge {{ background: #ff5722; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }}
-        #network {{ width: 100%; height: 600px; border: 1px solid #30363d; border-radius: 8px; background: #000000; }}
-        .alert-box {{ background: rgba(255, 87, 34, 0.1); border: 1px solid #ff5722; padding: 15px; border-radius: 8px; margin-top: 20px; }}
+        body {{
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }}
+        #header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }}
+        h1 {{
+            color: #ff5722;
+            margin: 0;
+            font-size: 24px;
+        }}
+        .badge {{
+            background: #ff5722;
+            color: white;
+            padding: 6px 14px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }}
+        #network {{
+            width: 100%;
+            height: 600px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            background: #010409;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }}
+        .alert-box {{
+            background: rgba(255, 87, 34, 0.08);
+            border-left: 4px solid #ff5722;
+            padding: 15px 20px;
+            border-radius: 4px;
+            margin-top: 20px;
+        }}
+        .legend {{
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+            font-size: 13px;
+        }}
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .dot {{
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: inline-block;
+        }}
     </style>
 </head>
 <body>
     <div id="header">
         <div>
             <h1>🛡️ Supply Chain Blast Radius Monitor</h1>
-            <p>Incident Target: <strong style="color:#ff5722;">{compromised_name}</strong> (COMPROMISED)</p>
+            <p>Target Compromise: <strong style="color:#ff1744;">{compromised_name}</strong> (ATTACK INGESTED)</p>
         </div>
         <div>
-            <span class="badge">LIVE GRAPH ENGINE</span>
+            <span class="badge">HYDRADB LIVE GRAPH</span>
         </div>
     </div>
 
+    <!-- The Canvas where the interactive graph draws -->
     <div id="network"></div>
 
+    <div class="legend">
+        <div class="legend-item"><span class="dot" style="background:#ff1744;"></span> Compromised Source</div>
+        <div class="legend-item"><span class="dot" style="background:#ff9800;"></span> Infected Dependency Bridge</div>
+        <div class="legend-item"><span class="dot" style="background:#d50000;"></span> Exposed Production Application</div>
+        <div class="legend-item"><span class="dot" style="background:#2e7d32;"></span> Safe Component</div>
+    </div>
+
     <div class="alert-box">
-        <h3>🚨 Incident Summary:</h3>
-        <p>• <strong>Transitively Exposed Applications:</strong> {len(blast_results)}</p>
-        <p>• <strong>Detected Typosquat Candidates:</strong> {len(typosquats)}</p>
+        <h3>🚨 Incident Response Intelligence:</h3>
+        <p>• <strong>Transitively Exposed Internal Applications:</strong> {len(blast_results)} Services at High Risk</p>
+        <p>• <strong>Detected Typosquat Lookalikes:</strong> {len(typosquats)} Nearby Suspicious Packages</p>
+        <p>• <strong>Recommendation:</strong> Quarantine lockfiles referencing version 3.0.1 and rollback to safe snapshots.</p>
     </div>
 
     <script type="text/javascript">
+        // 1. DEFINE GRAPH NODES (Entities)
         var nodes = new vis.DataSet([
-            // Compromised root node
-            {{ id: "{compromised_name}", label: "{compromised_name}\\n(HACKED PKG)", color: "#ff1744", font: {{ color: "white" }}, shape: "box", size: 30 }},
+            // The Root Malicious Package (Bright Red)
+            {{ id: "{compromised_name}", label: "{compromised_name}\\n[HACKED PKG]", color: "#ff1744", font: {{ color: "white", face: "monospace" }}, shape: "box", size: 30 }},
             
-            // Intermediary packages
-            {{ id: "router-core", label: "router-core\\n(infected)", color: "#ff5722", font: {{ color: "white" }}, shape: "box" }},
-            {{ id: "tanstack-router", label: "tanstack-router\\n(infected)", color: "#ff9800", font: {{ color: "white" }}, shape: "box" }},
-            {{ id: "url-utils", label: "url-utils\\n(safe)", color: "#4caf50", font: {{ color: "white" }}, shape: "box" }},
-            {{ id: "auth-helper", label: "auth-helper\\n(safe)", color: "#4caf50", font: {{ color: "white" }}, shape: "box" }},
+            // Intermediary Bridge Packages (Orange - Transitive Carrier)
+            {{ id: "router-core", label: "router-core\\n(infected carrier)", color: "#ff5722", font: {{ color: "white" }}, shape: "box" }},
+            {{ id: "tanstack-router", label: "tanstack-router\\n(infected carrier)", color: "#ff9800", font: {{ color: "white" }}, shape: "box" }},
             
-            // Applications
-            {{ id: "Production-Payment-API", label: "⚡ Production-Payment-API\\n[CRITICAL EXPOSURE]", color: "#d50000", font: {{ color: "white", size: 14 }}, shape: "ellipse" }},
-            {{ id: "Customer-Dashboard", label: "⚡ Customer-Dashboard\\n[CRITICAL EXPOSURE]", color: "#d50000", font: {{ color: "white", size: 14 }}, shape: "ellipse" }},
+            // Safe Packages (Green)
+            {{ id: "url-utils", label: "url-utils\\n(clean)", color: "#4caf50", font: {{ color: "white" }}, shape: "box" }},
+            {{ id: "auth-helper", label: "auth-helper\\n(clean)", color: "#4caf50", font: {{ color: "white" }}, shape: "box" }},
+            
+            // Internal Applications (Red Ellipses - The victims in the blast radius!)
+            {{ id: "Production-Payment-API", label: "⚡ Production-Payment-API\\n[CRITICAL EXPOSURE]", color: "#d50000", font: {{ color: "white", size: 14, bold: true }}, shape: "ellipse" }},
+            {{ id: "Customer-Dashboard", label: "⚡ Customer-Dashboard\\n[CRITICAL EXPOSURE]", color: "#d50000", font: {{ color: "white", size: 14, bold: true }}, shape: "ellipse" }},
             {{ id: "Internal-Admin-Portal", label: "Internal-Admin-Portal\\n[SAFE]", color: "#2e7d32", font: {{ color: "white" }}, shape: "ellipse" }}
         ]);
 
+        // 2. DEFINE GRAPH EDGES (Relationships / Dependency Arrows)
         var edges = new vis.DataSet([
             {{ from: "router-core", to: "{compromised_name}", arrows: "to", color: {{ color: "#ff1744" }}, width: 3, label: "depends on" }},
             {{ from: "tanstack-router", to: "router-core", arrows: "to", color: {{ color: "#ff5722" }}, width: 3, label: "depends on" }},
@@ -229,44 +342,49 @@ def export_html_visualizer(compromised_name, blast_results, typosquats):
             {{ from: "Internal-Admin-Portal", to: "url-utils", arrows: "to", color: {{ color: "#2e7d32" }} }}
         ]);
 
+        // 3. RENDER VISUAL PHYSICS GRAPH
         var container = document.getElementById("network");
         var data = {{ nodes: nodes, edges: edges }};
         var options = {{
             physics: {{
                 stabilization: true,
-                barnesHut: {{ springLength: 150, nodeDistance: 200 }}
-            }}
+                barnesHut: {{ springLength: 160, nodeDistance: 220, gravitationalConstant: -3000 }}
+            }},
+            interaction: {{ hover: true, tooltipDelay: 200 }}
         }};
         var network = new vis.Network(container, data, options);
     </script>
 </body>
 </html>
 """
-    output_path = os.path.join(os.path.dirname(__file__), "blast_radius_visualizer.html")
+    # Write the HTML file to disk inside the same folder as this script
+    output_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "blast_radius_visualizer.html"))
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     return output_path
 
-# -------------------------------------------------------------
-# 4. MAIN EXECUTION
-# -------------------------------------------------------------
+
+# =============================================================================
+# 🚀 SECTION 4: MAIN EXECUTION (Run this script)
+# =============================================================================
 if __name__ == "__main__":
+    # 1. Initialize our graph with the npm dataset
     graph = SupplyChainGraph(SAMPLE_DATA)
     hacked_package = "hacked-logger"
 
-    print("=" * 65)
-    print(f"🚨 SIMULATING COMPROMISE ON PACKAGE: '{hacked_package}'")
-    print("=" * 65)
+    print("=" * 70)
+    print(f"🚨 SIMULATING SUPPLY CHAIN ATTACK ON: '{hacked_package}'")
+    print("=" * 70)
 
-    # 1. Calculate Transitive Blast Radius
+    # 2. Compute Transitive Blast Radius (PS Question 1)
     blast_radius = graph.find_blast_radius(hacked_package)
-    print(f"\n💣 [QUESTION 1] TRANSITIVELY EXPOSED SERVICES ({len(blast_radius)} Found):")
+    print(f"\n💣 [QUESTION 1] TRANSITIVELY EXPOSED APPLICATIONS ({len(blast_radius)} Found):")
     for item in blast_radius:
         chain_str = " ──▶ ".join(item["chain"])
-        print(f"  • App: {item['app_name']} ({item['environment'].upper()})")
+        print(f"  • Application: {item['app_name']} ({item['environment'].upper()})")
         print(f"    Attack Path ({item['hop_count']} hops): {chain_str}")
 
-    # 2. Shared Maintainer Risks
+    # 3. Compute Shared Maintainer Risks (PS Question 4)
     shared_maintainers = graph.find_shared_maintainer_risks(hacked_package)
     print(f"\n👤 [QUESTION 4] SHARED MAINTAINER PACKAGES AT RISK:")
     if shared_maintainers:
@@ -275,15 +393,19 @@ if __name__ == "__main__":
     else:
         print("  • None detected for this maintainer.")
 
-    # 3. Typosquat Candidates
+    # 4. Compute Typosquats (PS Question 5)
     typos = graph.detect_typosquats("tanstack-router")
-    print(f"\n🎯 [QUESTION 5] TYPOSQUAT PACKAGES DETECTED NEAR 'tanstack-router':")
+    print(f"\n🎯 [QUESTION 5] TYPOSQUAT CANDIDATES NEAR 'tanstack-router':")
     for typo in typos:
         print(f"  • Suspect Package: '{typo['name']}' (Edit Distance: {typo['distance']}, Author: {typo['maintainer']})")
 
-    # 4. Generate Visual HTML Graph
+    # 5. Generate HTML File & Auto-Launch in Browser
     html_file = export_html_visualizer(hacked_package, blast_radius, typos)
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 70)
     print(f"✨ SUCCESS: Interactive Graph Visualizer generated!")
-    print(f"🌐 Open this file in your browser:\n   {html_file}")
-    print("=" * 65)
+    print(f"🌐 Launching visual graph in your browser automatically...")
+    print(f"   File: {html_file}")
+    print("=" * 70)
+
+    # ⭐ THIS AUTO-OPENS CHROME / EDGE ON YOUR COMPUTER:
+    webbrowser.open(f"file://{html_file}")
