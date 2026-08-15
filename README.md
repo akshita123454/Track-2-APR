@@ -17,6 +17,9 @@
 ---
 
 ## 🚨 The Problem: The Speed of Supply Chain Attacks
+## 👥 Authors & Contributors
+- Akshita
+- Pratik Raj (@pratikraj12341620)
 
 When a massive supply chain compromise hits the npm or PyPI ecosystem, security teams face a terrifying question: **"Are we exposed?"** 
 
