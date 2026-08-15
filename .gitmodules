@@ -1,0 +1,3 @@
+[submodule "hydradb"]
+	path = hydradb
+	url = https://github.com/hydra-db/hydradb.git
