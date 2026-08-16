@@ -7,7 +7,8 @@
     "typecheck": "tsc --noEmit",
     "test:seed": "npx tsx src/seed-test.ts",
     "validate:fixture": "tsx src/domain/fixture.ts",
-    "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts"
+    "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts",
+    "validate:graph-batch": "tsx src/ingest/graph-batch-smoke.ts"
   },
   "dependencies": {
     "neo4j-driver": "6.2.0"
