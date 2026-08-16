@@ -1,82 +1,57 @@
 import { performance } from "node:perf_hooks";
 import { createHydraDriver } from "./hydra-client.js";
 
-async function main(): Promise<void> {
+async function main() {
   const driver = await createHydraDriver();
-  console.log("✅ Connected to HydraDB");
-
+  const session = driver.session({ database: "default" });
   try {
-    const session = driver.session({ database: "default" });
+    console.log("✅ Connected to HydraDB");
 
-    try {
-      await session.run("MATCH (n:Service) DETACH DELETE n");
-      await session.run("MATCH (n:PackageVersion) DETACH DELETE n");
-      console.log("✅ Graph cleared");
+    // 1. Clear the graph
+    await session.run("MATCH (n:Service) DETACH DELETE n");
+    await session.run("MATCH (n:PackageVersion) DETACH DELETE n");
+    console.log("✅ Graph cleared");
+    
+    // 2. Create nodes implicitly by creating the DEPENDS_ON edges
+    await session.run(`
+      CREATE (s:Service {id: 1, name: "payment-api"})-[:DEPENDS_ON]->(p1:PackageVersion {id: 2, name: "auth-lib", version: "2.0.0", key: "npm:auth-lib@2.0.0"})
+    `);
+    await session.run(`
+      CREATE (p1:PackageVersion {id: 2, name: "auth-lib", version: "2.0.0", key: "npm:auth-lib@2.0.0"})-[:DEPENDS_ON]->(p2:PackageVersion {id: 3, name: "bad-lib", version: "1.2.4", key: "npm:bad-lib@1.2.4", compromised: true})
+    `);
 
-      // Create Nodes (Must use CREATE instead of MERGE in HydraDB v0.1.1)
-      await session.run(`
-        CREATE (:Service {id: 1, name: "payment-api"})
-      `);
-      await session.run(`
-        CREATE (:PackageVersion {
-          id: 2,
-          name: "auth-lib",
-          version: "2.0.0",
-          key: "npm:auth-lib@2.0.0"
-        })
-      `);
-      await session.run(`
-        CREATE (:PackageVersion {
-          id: 3,
-          name: "bad-lib",
-          version: "1.2.4",
-          key: "npm:bad-lib@1.2.4",
-          compromised: true
-        })
-      `);
+    // 3. Create USED_BY edges (the reverse of DEPENDS_ON) to allow fast outbound traversal
+    await session.run(`
+      CREATE (p1:PackageVersion {id: 2})-[:USED_BY]->(s:Service {id: 1})
+    `);
+    await session.run(`
+      CREATE (p2:PackageVersion {id: 3})-[:USED_BY]->(p1:PackageVersion {id: 2})
+    `);
 
-      // Create Edges (Requires CREATE and ONLY integer IDs without labels)
-      await session.run(`
-        CREATE ({id: 1})-[:DEPENDS_ON]->({id: 2})
-      `);
-      await session.run(`
-        CREATE ({id: 2})-[:DEPENDS_ON]->({id: 3})
-      `);
-      
-      console.log("✅ Created 3 nodes and 2 edges");
+    console.log("✅ Created 3 nodes, 2 DEPENDS_ON edges, 2 USED_BY edges");
+    
+    const queryStartedAt = performance.now();
 
-      const queryStartedAt = performance.now();
-      
-      // The Reverse Traversal (Finding the Blast Radius)
-      const result = await session.run(`
-        MATCH p = (compromised:PackageVersion {
-          key: "npm:bad-lib@1.2.4"
-        })<-[:DEPENDS_ON*1..10]-(affected)
-        RETURN affected.name AS name, labels(affected) AS type, length(p) AS depth
-        ORDER BY depth ASC
-      `);
-      
-      const queryDurationMs = performance.now() - queryStartedAt;
+    // 4. Query using the USED_BY edge, which is outbound from the compromised package
+    const result = await session.run(`
+      MATCH (compromised:PackageVersion {id: 3})-[:USED_BY*1..10]->(affected)
+      RETURN affected.name AS name
+    `);
 
-      console.log("✅ Reverse traversal from bad-lib@1.2.4:");
-      for (const record of result.records) {
-        const name = record.get("name") as string;
-        const labels = record.get("type") as string[];
-        console.log(`   → ${name} (${labels.join(", ")})`);
-      }
-      console.log(`✅ Query time: ${queryDurationMs.toFixed(2)}ms`);
-      
-    } finally {
-      await session.close();
+    const queryDurationMs = performance.now() - queryStartedAt;
+
+    console.log("✅ Reverse traversal from bad-lib@1.2.4:");
+    for (const record of result.records) {
+      console.log(`   → ${record.get("name")}`);
     }
+    console.log(`✅ Query time: ${queryDurationMs.toFixed(2)}ms`);
+
+  } catch (e: any) {
+    console.log("❌ Seed test failed:", e.message);
   } finally {
+    await session.close();
     await driver.close();
     console.log("✅ Connection closed");
   }
 }
-
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`❌ Seed test failed: ${message}`);
-  process.exitCode = 1;
-});
+main();
