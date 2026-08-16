@@ -1,0 +1,491 @@
+import {
+  createDerivedEdgeIdentity,
+  createEdgeIdentity,
+  generateDeterministicId,
+} from "./identity.js";
+
+import type {
+  CanonicalEdge,
+  CanonicalRelKind,
+  DerivedEdge,
+  GraphEdge,
+  GraphNode,
+  NodeKind,
+} from "./schema.js";
+
+export interface ValidationResult {
+  readonly valid: boolean;
+  readonly errors: readonly string[];
+}
+
+function isValidId(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isValidTimestamp(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function hasAllowedEndpoints(
+  relationship: CanonicalRelKind,
+  sourceKind: NodeKind,
+  targetKind: NodeKind,
+): boolean {
+  switch (relationship) {
+    case "HAS_VERSION":
+      return sourceKind === "Package" && targetKind === "PackageVersion";
+
+    case "DECLARES_DEPENDENCY":
+      return (
+        (
+          sourceKind === "Repository" ||
+          sourceKind === "Service" ||
+          sourceKind === "PackageVersion"
+        ) &&
+        targetKind === "Package"
+      );
+
+    case "DEPENDS_ON":
+      return (
+        (
+          sourceKind === "Service" ||
+          sourceKind === "PackageVersion"
+        ) &&
+        targetKind === "PackageVersion"
+      );
+
+    case "CONTAINS":
+      return sourceKind === "Repository" && targetKind === "Service";
+
+    case "TRIGGERS":
+      return sourceKind === "Repository" && targetKind === "CIWorkflow";
+
+    case "PRODUCES":
+      return (
+        (sourceKind === "CIWorkflow" && targetKind === "Build") ||
+        (sourceKind === "Build" && targetKind === "Artifact")
+      );
+
+    case "DEPLOYED_AS":
+      return sourceKind === "Artifact" && targetKind === "Deployment";
+
+    case "RUNS":
+      return sourceKind === "Deployment" && targetKind === "Service";
+
+    case "MAINTAINS":
+      return sourceKind === "Maintainer" && targetKind === "Package";
+
+    case "MEMBER_OF":
+      return sourceKind === "Maintainer" && targetKind === "Organization";
+
+    case "OWNS":
+      return (
+        sourceKind === "Organization" &&
+        (
+          targetKind === "Package" ||
+          targetKind === "Repository" ||
+          targetKind === "Service"
+        )
+      );
+
+    case "CAN_PUBLISH":
+      return sourceKind === "Credential" && targetKind === "Package";
+
+    case "CAN_ACCESS":
+      return sourceKind === "CIWorkflow" && targetKind === "Credential";
+
+    case "CONTROLS":
+      return (
+        (
+          sourceKind === "Maintainer" ||
+          sourceKind === "Organization"
+        ) &&
+        targetKind === "Credential"
+      );
+
+    case "AFFECTS":
+      return sourceKind === "Incident" && targetKind === "PackageVersion";
+
+    case "SUPPORTS":
+      return sourceKind === "Evidence" && targetKind !== "Evidence";
+
+    case "TARGETS":
+      return (
+        sourceKind === "Control" &&
+        targetKind !== "Evidence" &&
+        targetKind !== "Control"
+      );
+  }
+}
+
+function validateEvidenceReferences(
+  ownerDescription: string,
+  evidenceIds: readonly number[],
+  nodesById: ReadonlyMap<number, GraphNode>,
+  errors: string[],
+): void {
+  const uniqueIds = new Set<number>();
+
+  for (const evidenceId of evidenceIds) {
+    if (uniqueIds.has(evidenceId)) {
+      errors.push(
+        `${ownerDescription} contains duplicate evidence ID ${evidenceId}`,
+      );
+      continue;
+    }
+
+    uniqueIds.add(evidenceId);
+
+    const evidence = nodesById.get(evidenceId);
+
+    if (evidence === undefined) {
+      errors.push(
+        `${ownerDescription} references missing Evidence node ${evidenceId}`,
+      );
+    } else if (evidence.kind !== "Evidence") {
+      errors.push(
+        `${ownerDescription} references node ${evidenceId}, but its kind ` +
+          `is ${evidence.kind}, not Evidence`,
+      );
+    }
+  }
+}
+
+/**
+ * Validates exactly one reverse USED_BY edge for every DEPENDS_ON edge.
+ */
+export function validateParity(
+  edges: readonly GraphEdge[],
+): ValidationResult {
+  const errors: string[] = [];
+  const canonicalById = new Map<number, CanonicalEdge>();
+  const derivedByCanonicalId = new Map<number, DerivedEdge[]>();
+  const seenEdgeIds = new Set<number>();
+
+  for (const edge of edges) {
+    if (seenEdgeIds.has(edge.id)) {
+      errors.push(`Duplicate edge ID ${edge.id}`);
+    } else {
+      seenEdgeIds.add(edge.id);
+    }
+
+    if (edge.kind === "USED_BY") {
+      const directEvidence = (
+        edge as unknown as { evidenceIds?: unknown }
+      ).evidenceIds;
+
+      if (directEvidence !== undefined) {
+        errors.push(
+          `Derived USED_BY edge ${edge.id} must not contain evidenceIds`,
+        );
+      }
+
+      const existing =
+        derivedByCanonicalId.get(edge.derivedFrom) ?? [];
+
+      existing.push(edge);
+      derivedByCanonicalId.set(edge.derivedFrom, existing);
+    } else {
+      if (canonicalById.has(edge.id)) {
+        errors.push(`Duplicate canonical edge ID ${edge.id}`);
+      } else {
+        canonicalById.set(edge.id, edge);
+      }
+    }
+  }
+
+  for (const canonical of canonicalById.values()) {
+    if (canonical.kind !== "DEPENDS_ON") {
+      continue;
+    }
+
+    const reverseEdges =
+      derivedByCanonicalId.get(canonical.id) ?? [];
+
+    if (reverseEdges.length !== 1) {
+      errors.push(
+        `DEPENDS_ON edge ${canonical.id} must have exactly one derived ` +
+          `USED_BY edge; found ${reverseEdges.length}`,
+      );
+    }
+  }
+
+  for (const [canonicalId, derivedEdges] of derivedByCanonicalId) {
+    const canonical = canonicalById.get(canonicalId);
+
+    if (canonical === undefined) {
+      for (const derived of derivedEdges) {
+        errors.push(
+          `Orphan USED_BY edge ${derived.id} references missing ` +
+            `canonical edge ${canonicalId}`,
+        );
+      }
+
+      continue;
+    }
+
+    if (canonical.kind !== "DEPENDS_ON") {
+      for (const derived of derivedEdges) {
+        errors.push(
+          `USED_BY edge ${derived.id} derives from ${canonical.kind} ` +
+            `edge ${canonical.id}, not DEPENDS_ON`,
+        );
+      }
+
+      continue;
+    }
+
+    for (const derived of derivedEdges) {
+      if (
+        derived.sourceId !== canonical.targetId ||
+        derived.targetId !== canonical.sourceId
+      ) {
+        errors.push(
+          `USED_BY edge ${derived.id} does not exactly reverse ` +
+            `DEPENDS_ON edge ${canonical.id}`,
+        );
+      }
+
+      if (derived.derivedFromLogicalId !== canonical.logicalId) {
+        errors.push(
+          `USED_BY edge ${derived.id} has incorrect ` +
+            `derivedFromLogicalId`,
+        );
+      }
+
+      const expectedIdentity =
+        createDerivedEdgeIdentity(canonical.logicalId);
+
+      if (
+        derived.id !== expectedIdentity.id ||
+        derived.logicalId !== expectedIdentity.logicalId
+      ) {
+        errors.push(
+          `USED_BY edge ${derived.id} does not have the deterministic ` +
+            `identity derived from DEPENDS_ON edge ${canonical.id}`,
+        );
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+/**
+ * Validates the complete in-memory graph before HydraDB ingestion.
+ */
+export function validateGraph(
+  nodes: readonly GraphNode[],
+  edges: readonly GraphEdge[],
+): ValidationResult {
+  const errors: string[] = [];
+  const nodesById = new Map<number, GraphNode>();
+  const nodeIdByLogicalId = new Map<string, number>();
+
+  for (const node of nodes) {
+    if (!isValidId(node.id)) {
+      errors.push(`Node ${node.logicalId} has unsafe ID ${node.id}`);
+    }
+
+    if (!isValidTimestamp(node.observedAt)) {
+      errors.push(
+        `Node ${node.logicalId} has invalid observedAt ${node.observedAt}`,
+      );
+    }
+
+    const expectedId = generateDeterministicId(node.logicalId);
+
+    if (node.id !== expectedId) {
+      errors.push(
+        `Node ${node.logicalId} has ID ${node.id}; expected ${expectedId}`,
+      );
+    }
+
+    const existingNode = nodesById.get(node.id);
+
+    if (existingNode !== undefined) {
+      errors.push(
+        `Duplicate node ID ${node.id}: "${existingNode.logicalId}" and ` +
+          `"${node.logicalId}"`,
+      );
+    } else {
+      nodesById.set(node.id, node);
+    }
+
+    const existingId = nodeIdByLogicalId.get(node.logicalId);
+
+    if (existingId !== undefined) {
+      errors.push(
+        `Duplicate node logicalId "${node.logicalId}" uses IDs ` +
+          `${existingId} and ${node.id}`,
+      );
+    } else {
+      nodeIdByLogicalId.set(node.logicalId, node.id);
+    }
+
+    if (node.kind === "Evidence") {
+      if (node.evidenceIds.length !== 0) {
+        errors.push(
+          `Evidence node ${node.id} must not recursively reference evidence`,
+        );
+      }
+
+      if (
+        !Number.isFinite(node.confidence) ||
+        node.confidence < 0 ||
+        node.confidence > 1
+      ) {
+        errors.push(
+          `Evidence node ${node.id} confidence must be between 0 and 1`,
+        );
+      }
+    } else if (node.evidenceIds.length === 0) {
+      errors.push(
+        `${node.kind} node ${node.id} has no supporting Evidence node`,
+      );
+    }
+
+    if (
+      node.kind === "Incident" &&
+      node.intervalEnd !== null &&
+      node.intervalEnd < node.intervalStart
+    ) {
+      errors.push(
+        `Incident ${node.id} ends before its start timestamp`,
+      );
+    }
+  }
+
+  for (const node of nodes) {
+    validateEvidenceReferences(
+      `${node.kind} node ${node.id}`,
+      node.evidenceIds,
+      nodesById,
+      errors,
+    );
+
+    if (node.synthetic && node.kind !== "Evidence") {
+      const hasSyntheticEvidence = node.evidenceIds.some(
+        (evidenceId) => nodesById.get(evidenceId)?.synthetic === true,
+      );
+
+      if (!hasSyntheticEvidence) {
+        errors.push(
+          `Synthetic ${node.kind} node ${node.id} must reference at least ` +
+            `one synthetic Evidence node`,
+        );
+      }
+    }
+  }
+
+  const edgeById = new Map<number, GraphEdge>();
+  const edgeIdByLogicalId = new Map<string, number>();
+
+  for (const edge of edges) {
+    if (!isValidId(edge.id)) {
+      errors.push(`Edge ${edge.logicalId} has unsafe ID ${edge.id}`);
+    }
+
+    if (!isValidTimestamp(edge.observedAt)) {
+      errors.push(
+        `Edge ${edge.logicalId} has invalid observedAt ${edge.observedAt}`,
+      );
+    }
+
+    const existingEdge = edgeById.get(edge.id);
+
+    if (existingEdge !== undefined) {
+      errors.push(
+        `Duplicate edge ID ${edge.id}: "${existingEdge.logicalId}" and ` +
+          `"${edge.logicalId}"`,
+      );
+    } else {
+      edgeById.set(edge.id, edge);
+    }
+
+    const existingLogicalEdgeId =
+      edgeIdByLogicalId.get(edge.logicalId);
+
+    if (existingLogicalEdgeId !== undefined) {
+      errors.push(
+        `Duplicate edge logicalId "${edge.logicalId}" uses IDs ` +
+          `${existingLogicalEdgeId} and ${edge.id}`,
+      );
+    } else {
+      edgeIdByLogicalId.set(edge.logicalId, edge.id);
+    }
+
+    const source = nodesById.get(edge.sourceId);
+    const target = nodesById.get(edge.targetId);
+
+    if (source === undefined) {
+      errors.push(
+        `Edge ${edge.id} references missing source node ${edge.sourceId}`,
+      );
+    }
+
+    if (target === undefined) {
+      errors.push(
+        `Edge ${edge.id} references missing target node ${edge.targetId}`,
+      );
+    }
+
+    if (edge.kind === "USED_BY") {
+      continue;
+    }
+
+    if (edge.evidenceIds.length === 0) {
+      errors.push(
+        `Canonical ${edge.kind} edge ${edge.id} has no supporting evidence`,
+      );
+    }
+
+    validateEvidenceReferences(
+      `${edge.kind} edge ${edge.id}`,
+      edge.evidenceIds,
+      nodesById,
+      errors,
+    );
+
+    if (
+      source !== undefined &&
+      target !== undefined &&
+      !hasAllowedEndpoints(edge.kind, source.kind, target.kind)
+    ) {
+      errors.push(
+        `${edge.kind} edge ${edge.id} cannot connect ` +
+          `${source.kind} to ${target.kind}`,
+      );
+    }
+
+    if (source !== undefined && target !== undefined) {
+      const expectedIdentity = createEdgeIdentity({
+        kind: edge.kind,
+        sourceLogicalId: source.logicalId,
+        targetLogicalId: target.logicalId,
+        discriminator: edge.identityDiscriminator,
+      });
+
+      if (
+        edge.id !== expectedIdentity.id ||
+        edge.logicalId !== expectedIdentity.logicalId
+      ) {
+        errors.push(
+          `${edge.kind} edge ${edge.id} does not match its deterministic ` +
+            `relationship identity`,
+        );
+      }
+    }
+  }
+
+  const parityResult = validateParity(edges);
+  errors.push(...parityResult.errors);
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
