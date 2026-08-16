@@ -1,9 +1,9 @@
 import {
   createEdgeIdentity,
   createEntityIdentity,
-} from "../domain/identity.js";
+} from "../../domain/identity.js";
 
-import { validateGraph } from "../domain/validator.js";
+import { validateGraph } from "../../domain/validator.js";
 import { fetchPackageMetadata } from "./registry-client.js";
 
 import type {
@@ -26,7 +26,7 @@ import type {
   PackageNode,
   PackageVersionNode,
   StandardCanonicalEdge,
-} from "../domain/schema.js";
+} from "../../domain/schema.js";
 
 const COLLECTOR_VERSION = "0.1.0";
 
@@ -332,7 +332,7 @@ export async function collectPackage(
         kind: "HAS_VERSION",
         source: packageNode,
         target: versionNode,
-        discriminator: `npm-registry:${versionString}`,
+        discriminator: "default",
         evidenceId: evidence.id,
         observedAt,
       }),
