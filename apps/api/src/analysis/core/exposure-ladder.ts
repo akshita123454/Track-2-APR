@@ -1,10 +1,31 @@
-import type { NodeId } from "../../domain/schema.js";
+import type {
+  EvidenceNode,
+  NodeId,
+} from "../../domain/schema.js";
 import type {
   ExposureAssessment,
   ExposureEvidenceSignals,
   ExposureStage,
+  ReadonlyGraphReader,
   SecurityConclusion,
 } from "./analysis-types.js";
+
+export type ExposureEvidenceValidationCode =
+  | "missing-evidence"
+  | "wrong-evidence-kind"
+  | "evidence-reader-mismatch";
+
+export class ExposureEvidenceValidationError
+  extends Error {
+  public constructor(
+    readonly code: ExposureEvidenceValidationCode,
+    readonly evidenceId: NodeId,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ExposureEvidenceValidationError";
+  }
+}
 
 const CONCLUSION_BY_STAGE: Readonly<
   Record<ExposureStage, SecurityConclusion>
@@ -50,6 +71,18 @@ function uniqueSortedEvidenceIds(
   return [...new Set(evidenceIds)].sort(
     (left, right) => left - right,
   );
+}
+
+function allSignalEvidenceIds(
+  signals: ExposureEvidenceSignals,
+): readonly NodeId[] {
+  return uniqueSortedEvidenceIds([
+    signals.exactResolutionEvidenceIds,
+    signals.buildEvidenceIds,
+    signals.deploymentEvidenceIds,
+    signals.reachabilityEvidenceIds,
+    signals.executionEvidenceIds,
+  ]);
 }
 
 function determineExposureStage(
@@ -129,15 +162,11 @@ function evidenceForStage(
 }
 
 /**
- * Classifies one structural blast-radius candidate using only explicitly
- * supplied evidence.
+ * Pure staged classifier used by internal deterministic tests.
  *
- * Evidence stages form a strict ladder. Evidence for a later stage cannot
- * skip an unproven prerequisite. For example, deployment evidence alone does
- * not prove that the affected package version was exactly resolved and built.
- *
- * This function does not query or mutate the graph. Confidence and severity
- * remain separate concerns and are intentionally not inferred here.
+ * This function trusts its inputs and therefore must not be exposed through
+ * the production public barrel. Production-facing code must first establish
+ * persistence and validate evidence.
  */
 export function classifyExposure(
   signals: ExposureEvidenceSignals,
@@ -150,4 +179,114 @@ export function classifyExposure(
     evidenceIds: evidenceForStage(stage, signals),
     uncertainties: [...UNCERTAINTIES_BY_STAGE[stage]],
   };
+}
+
+async function validateEvidence(
+  reader: ReadonlyGraphReader,
+  signals: ExposureEvidenceSignals,
+): Promise<void> {
+  const requestedIds = allSignalEvidenceIds(signals);
+
+  if (requestedIds.length === 0) {
+    return;
+  }
+
+  const expectedEvidenceById =
+    new Map<NodeId, EvidenceNode>();
+
+  for (const evidenceId of requestedIds) {
+    const node = await reader.getNode(evidenceId);
+
+    if (node === null) {
+      throw new ExposureEvidenceValidationError(
+        "missing-evidence",
+        evidenceId,
+        `Evidence node ${String(evidenceId)} was not found`,
+      );
+    }
+
+    if (node.kind !== "Evidence") {
+      throw new ExposureEvidenceValidationError(
+        "wrong-evidence-kind",
+        evidenceId,
+        `Node ${String(evidenceId)} is ${node.kind}, not Evidence`,
+      );
+    }
+
+    expectedEvidenceById.set(evidenceId, node);
+  }
+
+  const readerEvidence = await reader.getEvidence(
+    requestedIds,
+  );
+  const returnedEvidenceById =
+    new Map<NodeId, EvidenceNode>();
+
+  for (const evidence of readerEvidence) {
+    if (evidence.kind !== "Evidence") {
+      throw new ExposureEvidenceValidationError(
+        "wrong-evidence-kind",
+        evidence.id,
+        `Reader returned non-Evidence node ${String(evidence.id)}`,
+      );
+    }
+
+    const expected =
+      expectedEvidenceById.get(evidence.id);
+
+    if (expected === undefined) {
+      throw new ExposureEvidenceValidationError(
+        "evidence-reader-mismatch",
+        evidence.id,
+        `Reader returned unexpected Evidence node ${String(evidence.id)}`,
+      );
+    }
+
+    if (returnedEvidenceById.has(evidence.id)) {
+      throw new ExposureEvidenceValidationError(
+        "evidence-reader-mismatch",
+        evidence.id,
+        `Reader returned duplicate Evidence node ${String(evidence.id)}`,
+      );
+    }
+
+    if (evidence.logicalId !== expected.logicalId) {
+      throw new ExposureEvidenceValidationError(
+        "evidence-reader-mismatch",
+        evidence.id,
+        `Evidence node ${String(evidence.id)} has inconsistent identity`,
+      );
+    }
+
+    returnedEvidenceById.set(evidence.id, evidence);
+  }
+
+  for (const evidenceId of requestedIds) {
+    if (!returnedEvidenceById.has(evidenceId)) {
+      throw new ExposureEvidenceValidationError(
+        "evidence-reader-mismatch",
+        evidenceId,
+        `Evidence reader did not return node ${String(evidenceId)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Internal evidence-aware classifier.
+ *
+ * Every supplied evidence ID must resolve through both generic node lookup
+ * and the reader's evidence lookup. Missing IDs, wrong node kinds, duplicate
+ * records, unexpected records, and inconsistent identities fail closed.
+ *
+ * This remains an internal helper because semverEligible is still a caller
+ * assertion. A future production API must derive semver eligibility from the
+ * declared range and affected package version.
+ */
+export async function classifyExposureWithValidatedEvidence(
+  reader: ReadonlyGraphReader,
+  signals: ExposureEvidenceSignals,
+): Promise<ExposureAssessment> {
+  await validateEvidence(reader, signals);
+  return classifyExposure(signals);
 }
