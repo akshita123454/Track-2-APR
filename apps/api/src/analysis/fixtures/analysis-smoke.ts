@@ -1,206 +1,699 @@
+import assert from "node:assert/strict";
+
+import type {
+  Driver,
+  Session,
+} from "neo4j-driver";
+
 import {
-  deepEqual,
-  equal,
-  ok,
-} from "node:assert/strict";
+  HydraPersistenceService,
+} from "../../db/persistence-service.js";
+import type {
+  PersistenceServiceOptions,
+} from "../../db/persistence-service.js";
+
+import {
+  createDependencyPair,
+} from "../../domain/factories.js";
+import type {
+  DependencyPair,
+} from "../../domain/factories.js";
+import {
+  createEntityIdentity,
+} from "../../domain/identity.js";
 import type {
   DependencyEdge,
+  DerivedEdge,
   EvidenceNode,
+  GraphEdge,
   GraphNode,
   NodeId,
   PackageVersionNode,
   ServiceNode,
 } from "../../domain/schema.js";
-import { analyzeBlastRadius } from "../core/blast-radius.js";
-import { classifyExposure } from "../core/exposure-ladder.js";
+
+
+import {
+  mergeGraphFragments,
+} from "../../ingest/graph-batch.js";
+import type {
+  GraphBatch,
+} from "../../ingest/graph-batch.js";
+
+import {
+  analyzeBlastRadius,
+} from "../core/blast-radius.js";
+import {
+  classifyExposureWithValidatedEvidence,
+  ExposureEvidenceValidationError,
+} from "../core/exposure-ladder.js";
 import type {
   DependencyHop,
   ExposureEvidenceSignals,
-  ExposureStage,
   ReadonlyGraphReader,
-  SecurityConclusion,
 } from "../core/analysis-types.js";
+import {
+  runBlastRadius,
+} from "../persisted-analysis.js";
+
+type UnknownRecord = Record<string, unknown>;
+
+type MutationKind =
+  | "node"
+  | "canonical"
+  | "derived";
+
+interface StoredNode extends UnknownRecord {
+  vertex: number;
+  logical_id: string;
+  kind: string;
+}
+
+interface StoredRelationship extends UnknownRecord {
+  relationship_vertex: number;
+  source_vertex: number;
+  destination_vertex: number;
+  logical_id: string;
+  kind: string;
+  relationshipType: string;
+}
+
+interface FakeResult {
+  readonly records: readonly FakeRecord[];
+}
+
+interface AnalysisFixture {
+  readonly batch: GraphBatch;
+  readonly affectedVersion: PackageVersionNode;
+  readonly bridgeVersion: PackageVersionNode;
+  readonly alphaService: ServiceNode;
+  readonly betaService: ServiceNode;
+  readonly resolutionEvidence: EvidenceNode;
+  readonly buildEvidence: EvidenceNode;
+  readonly deploymentEvidence: EvidenceNode;
+  readonly reachabilityEvidence: EvidenceNode;
+  readonly executionEvidence: EvidenceNode;
+  readonly alphaDirectPair: DependencyPair;
+}
 
 const OBSERVED_AT = 1_700_000_000_000;
 
-const AFFECTED_VERSION_ID: NodeId = 100;
-const BRIDGE_VERSION_ID: NodeId = 200;
-const BETA_SERVICE_ID: NodeId = 300;
-const ALPHA_SERVICE_ID: NodeId = 400;
+class FakeRecord {
+  public constructor(
+    private readonly values: Readonly<UnknownRecord>,
+  ) {}
 
-const RESOLUTION_EVIDENCE_ID: NodeId = 901;
-const BUILD_EVIDENCE_ID: NodeId = 902;
-const DEPLOYMENT_EVIDENCE_ID: NodeId = 903;
-const REACHABILITY_EVIDENCE_ID: NodeId = 904;
-const EXECUTION_EVIDENCE_ID: NodeId = 905;
+  public get(key: string): unknown {
+    return this.values[key];
+  }
+}
 
-function createEvidenceNode(
-  id: NodeId,
+function isRecord(
+  value: unknown,
+): value is UnknownRecord {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
+}
+
+function requireRecord(
+  value: unknown,
+  description: string,
+): UnknownRecord {
+  assert.ok(
+    isRecord(value),
+    `${description} must be a record`,
+  );
+
+  return value;
+}
+
+function requireString(
+  value: unknown,
+  description: string,
+): string {
+  if (typeof value !== "string") {
+    throw new TypeError(
+      `${description} must be a string`,
+    );
+  }
+
+  return value;
+}
+
+function requireNumber(
+  value: unknown,
+  description: string,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0
+  ) {
+    throw new TypeError(
+      `${description} must be a nonnegative safe integer`,
+    );
+  }
+
+  return value;
+}
+
+function requireRows(
+  parameters: Readonly<UnknownRecord>,
+): UnknownRecord[] {
+  const rows = parameters.rows;
+
+  assert.ok(
+    Array.isArray(rows),
+    "rows parameter must be an array",
+  );
+
+  return rows.map((row, index) =>
+    requireRecord(row, `rows[${index}]`),
+  );
+}
+
+function requireMatch(
+  query: string,
+  pattern: RegExp,
+  description: string,
+): string {
+  const match = query.match(pattern);
+
+  assert.ok(
+    match?.[1] !== undefined,
+    `Could not parse ${description}`,
+  );
+
+  return match[1];
+}
+
+function mutationKindForQuery(
+  query: string,
+): MutationKind | undefined {
+  if (!query.startsWith("UNWIND $rows AS row")) {
+    return undefined;
+  }
+
+  if (query.includes("MERGE (n {id: row.vertex})")) {
+    return "node";
+  }
+
+  if (query.includes("MERGE (s)-[r:USED_BY ")) {
+    return "derived";
+  }
+
+  if (query.includes("MERGE (s)-[r:")) {
+    return "canonical";
+  }
+
+  return undefined;
+}
+
+class SuccessfulHydraStore {
+  readonly nodes =
+    new Map<number, StoredNode>();
+
+  readonly relationships =
+    new Map<number, StoredRelationship>();
+
+  sessionsCreated = 0;
+  sessionsClosed = 0;
+
+  public readonly sessionFactory = (): Session => {
+    this.sessionsCreated += 1;
+
+    return new SuccessfulFakeSession(
+      this,
+    ) as unknown as Session;
+  };
+
+  public noteSessionClosed(): void {
+    this.sessionsClosed += 1;
+  }
+
+  public async run(
+    query: string,
+    parameters: Readonly<UnknownRecord> = {},
+    transactionConfig?: {
+      readonly metadata?: Readonly<
+        Record<string, string>
+      >;
+    },
+  ): Promise<FakeResult> {
+    const metadata =
+      transactionConfig?.metadata ?? {};
+    const mutationKind =
+      mutationKindForQuery(query);
+
+    if (mutationKind !== undefined) {
+      if (mutationKind === "node") {
+        this.upsertNodes(parameters);
+      } else {
+        this.upsertRelationships(
+          query,
+          parameters,
+        );
+      }
+
+      return { records: [] };
+    }
+
+    const step =
+      metadata["hydradb.caller.step"] ?? "";
+
+    if (step.startsWith("preflight.")) {
+      return { records: [] };
+    }
+
+    if (step.startsWith("verify.node.")) {
+      return this.verifyNode(parameters);
+    }
+
+    if (step.startsWith("verify.edge.")) {
+      return this.verifyRelationship(
+        query,
+        parameters,
+      );
+    }
+
+    throw new Error(
+      `Fake HydraDB received an unsupported query:\n${query}`,
+    );
+  }
+
+  private upsertNodes(
+    parameters: Readonly<UnknownRecord>,
+  ): void {
+    for (const row of requireRows(parameters)) {
+      const vertex = requireNumber(
+        row.vertex,
+        "node vertex",
+      );
+
+      this.nodes.set(vertex, {
+        ...row,
+        vertex,
+        logical_id: requireString(
+          row.logical_id,
+          "node logical_id",
+        ),
+        kind: requireString(
+          row.kind,
+          "node kind",
+        ),
+      });
+    }
+  }
+
+  private upsertRelationships(
+    query: string,
+    parameters: Readonly<UnknownRecord>,
+  ): void {
+    const relationshipType = requireMatch(
+      query,
+      /MERGE \(s\)-\[r:([A-Za-z_][A-Za-z0-9_]*) /,
+      "relationship type",
+    );
+
+    for (const row of requireRows(parameters)) {
+      const relationshipVertex =
+        requireNumber(
+          row.relationship_vertex,
+          "relationship vertex",
+        );
+
+      this.relationships.set(
+        relationshipVertex,
+        {
+          ...row,
+          relationship_vertex:
+            relationshipVertex,
+          source_vertex: requireNumber(
+            row.source_vertex,
+            "relationship source vertex",
+          ),
+          destination_vertex:
+            requireNumber(
+              row.destination_vertex,
+              "relationship destination vertex",
+          ),
+          logical_id: requireString(
+            row.logical_id,
+            "relationship logical_id",
+          ),
+          kind: requireString(
+            row.kind,
+            "relationship kind",
+          ),
+          relationshipType,
+        },
+      );
+    }
+  }
+
+  private verifyNode(
+    parameters: Readonly<UnknownRecord>,
+  ): FakeResult {
+    const vertex = requireNumber(
+      parameters.id,
+      "verification node ID",
+    );
+    const node = this.nodes.get(vertex);
+
+    if (node === undefined) {
+      return { records: [] };
+    }
+
+    return {
+      records: [
+        new FakeRecord({
+          logical_id: node.logical_id,
+          kind: node.kind,
+        }),
+      ],
+    };
+  }
+
+  private verifyRelationship(
+    query: string,
+    parameters: Readonly<UnknownRecord>,
+  ): FakeResult {
+    const relationshipType = requireMatch(
+      query,
+      /\[r:([A-Za-z_][A-Za-z0-9_]*)\]->/,
+      "verification relationship type",
+    );
+    const sourceVertex = requireNumber(
+      parameters.source_vertex,
+      "verification source vertex",
+    );
+    const destinationVertex = requireNumber(
+      parameters.destination_vertex,
+      "verification destination vertex",
+    );
+
+    const records = [
+      ...this.relationships.values(),
+    ]
+      .filter(
+        (relationship) =>
+          relationship.relationshipType ===
+            relationshipType &&
+          relationship.source_vertex ===
+            sourceVertex &&
+          relationship.destination_vertex ===
+            destinationVertex,
+      )
+      .map(
+        (relationship) =>
+          new FakeRecord({
+            relationship_vertex:
+              relationship.relationship_vertex,
+            logical_id:
+              relationship.logical_id,
+            kind: relationship.kind,
+          }),
+      );
+
+    return { records };
+  }
+}
+
+class SuccessfulFakeSession {
+  private closed = false;
+
+  public constructor(
+    private readonly store: SuccessfulHydraStore,
+  ) {}
+
+  public run(
+    query: string,
+    parameters?: Readonly<UnknownRecord>,
+    transactionConfig?: {
+      readonly metadata?: Readonly<
+        Record<string, string>
+      >;
+    },
+  ): Promise<FakeResult> {
+    assert.equal(
+      this.closed,
+      false,
+      "Cannot run a closed fake session",
+    );
+
+    return this.store.run(
+      query,
+      parameters,
+      transactionConfig,
+    );
+  }
+
+  public async close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      this.store.noteSessionClosed();
+    }
+  }
+}
+
+function createEvidence(
+  suffix: string,
   detail: string,
 ): EvidenceNode {
+  const identity = createEntityIdentity(
+    `evidence:analysis:${suffix}`,
+  );
+
   return {
-    id,
-    logicalId: `evidence:analysis-smoke:${String(id)}`,
+    ...identity,
     kind: "Evidence",
     evidenceIds: [],
     synthetic: true,
     observedAt: OBSERVED_AT,
     sourceType: "synthetic-fixture",
-    sourceUri: `fixture://analysis-smoke/${String(id)}`,
-    collectorVersion: "analysis-smoke-v1",
+    sourceUri:
+      `fixture://analysis/${suffix}`,
+    collectorVersion: "analysis-smoke-v2",
     confidence: 1,
     detail,
   };
 }
 
-function createDependencyEdge(
-  id: number,
-  sourceId: NodeId,
-  targetId: NodeId,
-  identityDiscriminator: string,
-): DependencyEdge {
-  return {
-    id,
-    logicalId:
-      `dependency:${String(sourceId)}:` +
-      `${String(targetId)}:${identityDiscriminator}`,
-    sourceId,
-    targetId,
-    kind: "DEPENDS_ON",
+function createFixture(): AnalysisFixture {
+  const resolutionEvidence = createEvidence(
+    "resolution",
+    "Exact dependency resolution evidence",
+  );
+  const buildEvidence = createEvidence(
+    "build",
+    "Build inclusion evidence",
+  );
+  const deploymentEvidence = createEvidence(
+    "deployment",
+    "Deployment evidence",
+  );
+  const reachabilityEvidence = createEvidence(
+    "reachability",
+    "Runtime reachability evidence",
+  );
+  const executionEvidence = createEvidence(
+    "execution",
+    "Observed execution evidence",
+  );
+
+  const affectedIdentity = createEntityIdentity(
+    "pkgver:npm:fixture-affected@1.0.0",
+  );
+  const affectedVersion: PackageVersionNode = {
+    ...affectedIdentity,
+    kind: "PackageVersion",
+    evidenceIds: [resolutionEvidence.id],
+    synthetic: true,
     observedAt: OBSERVED_AT,
-    derived: false,
-    identityDiscriminator,
-    evidenceIds: [RESOLUTION_EVIDENCE_ID],
+    ecosystem: "npm",
+    packageName: "fixture-affected",
+    version: "1.0.0",
+  };
+
+  const bridgeIdentity = createEntityIdentity(
+    "pkgver:npm:fixture-bridge@2.0.0",
+  );
+  const bridgeVersion: PackageVersionNode = {
+    ...bridgeIdentity,
+    kind: "PackageVersion",
+    evidenceIds: [resolutionEvidence.id],
+    synthetic: true,
+    observedAt: OBSERVED_AT,
+    ecosystem: "npm",
+    packageName: "fixture-bridge",
+    version: "2.0.0",
+  };
+
+  const alphaIdentity = createEntityIdentity(
+    "service:fixture:alpha",
+  );
+  const alphaService: ServiceNode = {
+    ...alphaIdentity,
+    kind: "Service",
+    evidenceIds: [resolutionEvidence.id],
+    synthetic: true,
+    observedAt: OBSERVED_AT,
+    name: "alpha-service",
+    criticality: "critical",
+    internetExposed: true,
+    dataSensitivity: "high",
+  };
+
+  const betaIdentity = createEntityIdentity(
+    "service:fixture:beta",
+  );
+  const betaService: ServiceNode = {
+    ...betaIdentity,
+    kind: "Service",
+    evidenceIds: [resolutionEvidence.id],
+    synthetic: true,
+    observedAt: OBSERVED_AT,
+    name: "beta-service",
+    criticality: "medium",
+  };
+
+  const alphaDirectPair = createDependencyPair({
+    source: alphaService,
+    target: affectedVersion,
+    discriminator: "alpha-direct",
     dependencyType: "production",
-    declaredRange: "^1.0.0",
-    lockfilePath: "package-lock.json",
+    evidenceIds: [resolutionEvidence.id],
+    observedAt: OBSERVED_AT,
+    generatorVersion: "analysis-smoke-v2",
+    declaredRange: "1.0.0",
+    lockfilePath:
+      "alpha/node_modules/fixture-affected",
+  });
+
+  const bridgeToAffectedPair =
+    createDependencyPair({
+      source: bridgeVersion,
+      target: affectedVersion,
+      discriminator: "bridge-to-affected",
+      dependencyType: "production",
+      evidenceIds: [resolutionEvidence.id],
+      observedAt: OBSERVED_AT,
+      generatorVersion: "analysis-smoke-v2",
+      declaredRange: "1.0.0",
+      lockfilePath:
+        "bridge/node_modules/fixture-affected",
+    });
+
+  const betaDirectPair = createDependencyPair({
+    source: betaService,
+    target: affectedVersion,
+    discriminator: "beta-direct",
+    dependencyType: "production",
+    evidenceIds: [resolutionEvidence.id],
+    observedAt: OBSERVED_AT,
+    generatorVersion: "analysis-smoke-v2",
+    declaredRange: "1.0.0",
+    lockfilePath:
+      "beta/node_modules/fixture-affected",
+  });
+
+  const alphaThroughBridgePair =
+    createDependencyPair({
+      source: alphaService,
+      target: bridgeVersion,
+      discriminator: "alpha-through-bridge",
+      dependencyType: "production",
+      evidenceIds: [resolutionEvidence.id],
+      observedAt: OBSERVED_AT,
+      generatorVersion: "analysis-smoke-v2",
+      declaredRange: "2.0.0",
+      lockfilePath:
+        "alpha/node_modules/fixture-bridge",
+    });
+
+  const cyclePair = createDependencyPair({
+    source: affectedVersion,
+    target: bridgeVersion,
+    discriminator: "cycle-back-to-bridge",
+    dependencyType: "production",
+    evidenceIds: [resolutionEvidence.id],
+    observedAt: OBSERVED_AT,
+    generatorVersion: "analysis-smoke-v2",
+    declaredRange: "2.0.0",
+    lockfilePath:
+      "affected/node_modules/fixture-bridge",
+  });
+
+  const pairs = [
+    alphaDirectPair,
+    bridgeToAffectedPair,
+    betaDirectPair,
+    alphaThroughBridgePair,
+    cyclePair,
+  ];
+
+  const edges: GraphEdge[] = [];
+
+  for (const pair of pairs) {
+    edges.push(
+      pair.canonical,
+      pair.reverseIndex,
+    );
+  }
+
+  const batch = mergeGraphFragments([
+    {
+      source: "analysis-smoke-production-fixture",
+      nodes: [
+        resolutionEvidence,
+        buildEvidence,
+        deploymentEvidence,
+        reachabilityEvidence,
+        executionEvidence,
+        affectedVersion,
+        bridgeVersion,
+        alphaService,
+        betaService,
+      ],
+      edges,
+    },
+  ]);
+
+  return {
+    batch,
+    affectedVersion,
+    bridgeVersion,
+    alphaService,
+    betaService,
+    resolutionEvidence,
+    buildEvidence,
+    deploymentEvidence,
+    reachabilityEvidence,
+    executionEvidence,
+    alphaDirectPair,
   };
 }
 
-const affectedVersion: PackageVersionNode = {
-  id: AFFECTED_VERSION_ID,
-  logicalId: "npm:@fixture/affected@1.0.0",
-  kind: "PackageVersion",
-  evidenceIds: [RESOLUTION_EVIDENCE_ID],
-  synthetic: true,
-  observedAt: OBSERVED_AT,
-  ecosystem: "npm",
-  packageName: "@fixture/affected",
-  version: "1.0.0",
-  publishedAt: OBSERVED_AT - 10_000,
-};
+class BatchGraphReader implements ReadonlyGraphReader {
+  private readonly nodesById =
+    new Map<NodeId, GraphNode>();
 
-const bridgeVersion: PackageVersionNode = {
-  id: BRIDGE_VERSION_ID,
-  logicalId: "npm:@fixture/bridge@2.0.0",
-  kind: "PackageVersion",
-  evidenceIds: [RESOLUTION_EVIDENCE_ID],
-  synthetic: true,
-  observedAt: OBSERVED_AT,
-  ecosystem: "npm",
-  packageName: "@fixture/bridge",
-  version: "2.0.0",
-  publishedAt: OBSERVED_AT - 5_000,
-};
-
-const betaService: ServiceNode = {
-  id: BETA_SERVICE_ID,
-  logicalId: "service:beta",
-  kind: "Service",
-  evidenceIds: [],
-  synthetic: true,
-  observedAt: OBSERVED_AT,
-  name: "beta-service",
-  criticality: "medium",
-};
-
-const alphaService: ServiceNode = {
-  id: ALPHA_SERVICE_ID,
-  logicalId: "service:alpha",
-  kind: "Service",
-  evidenceIds: [],
-  synthetic: true,
-  observedAt: OBSERVED_AT,
-  name: "alpha-service",
-  criticality: "critical",
-  internetExposed: true,
-  dataSensitivity: "high",
-};
-
-const evidenceNodes: readonly EvidenceNode[] = [
-  createEvidenceNode(
-    RESOLUTION_EVIDENCE_ID,
-    "Exact dependency resolution was observed.",
-  ),
-  createEvidenceNode(
-    BUILD_EVIDENCE_ID,
-    "The affected dependency was included in a build.",
-  ),
-  createEvidenceNode(
-    DEPLOYMENT_EVIDENCE_ID,
-    "The affected build artifact was deployed.",
-  ),
-  createEvidenceNode(
-    REACHABILITY_EVIDENCE_ID,
-    "Runtime reachability was observed.",
-  ),
-  createEvidenceNode(
-    EXECUTION_EVIDENCE_ID,
-    "Execution was directly observed.",
-  ),
-];
-
-const graphNodes: readonly GraphNode[] = [
-  affectedVersion,
-  bridgeVersion,
-  betaService,
-  alphaService,
-  ...evidenceNodes,
-];
-
-const dependencyEdges: readonly DependencyEdge[] = [
-  createDependencyEdge(
-    1_101,
-    ALPHA_SERVICE_ID,
-    AFFECTED_VERSION_ID,
-    "alpha-direct",
-  ),
-  createDependencyEdge(
-    1_102,
-    BRIDGE_VERSION_ID,
-    AFFECTED_VERSION_ID,
-    "bridge-to-affected",
-  ),
-  createDependencyEdge(
-    1_103,
-    BETA_SERVICE_ID,
-    AFFECTED_VERSION_ID,
-    "beta-direct",
-  ),
-  createDependencyEdge(
-    1_104,
-    AFFECTED_VERSION_ID,
-    BRIDGE_VERSION_ID,
-    "cycle-back-to-bridge",
-  ),
-  createDependencyEdge(
-    1_105,
-    ALPHA_SERVICE_ID,
-    BRIDGE_VERSION_ID,
-    "alpha-through-bridge",
-  ),
-];
-
-class FixtureGraphReader implements ReadonlyGraphReader {
-  private readonly nodesById: ReadonlyMap<NodeId, GraphNode>;
+  private readonly edgesById =
+    new Map<number, GraphEdge>();
 
   public constructor(
-    nodes: readonly GraphNode[],
-    private readonly edges: readonly DependencyEdge[],
+    private readonly batch: GraphBatch,
   ) {
-    this.nodesById = new Map(
-      nodes.map((node) => [node.id, node] as const),
-    );
+    for (const node of batch.nodes) {
+      this.nodesById.set(node.id, node);
+    }
+
+    for (const edge of batch.edges) {
+      this.edgesById.set(edge.id, edge);
+    }
   }
 
   public async getNode(
@@ -212,25 +705,64 @@ class FixtureGraphReader implements ReadonlyGraphReader {
   public async findDependents(
     nodeId: NodeId,
   ): Promise<readonly DependencyHop[]> {
+    const reverseIndexes = this.batch.edges
+      .filter(
+        (edge): edge is DerivedEdge =>
+          edge.kind === "USED_BY" &&
+          edge.sourceId === nodeId,
+      )
+      .sort((left, right) => left.id - right.id);
+
     const hops: DependencyHop[] = [];
 
-    for (const edge of this.edges) {
-      if (edge.targetId !== nodeId) {
-        continue;
+    for (const reverseIndex of reverseIndexes) {
+      const resolved =
+        this.edgesById.get(
+          reverseIndex.derivedFrom,
+        );
+
+      if (
+        resolved === undefined ||
+        resolved.kind !== "DEPENDS_ON" ||
+        resolved.derived !== false
+      ) {
+        throw new Error(
+          `USED_BY ${String(reverseIndex.id)} does not resolve ` +
+          "to canonical DEPENDS_ON",
+        );
       }
 
-      const dependentNode = this.nodesById.get(edge.sourceId);
+      if (
+        reverseIndex.derivedFromLogicalId !==
+          resolved.logicalId ||
+        resolved.sourceId !==
+          reverseIndex.targetId ||
+        resolved.targetId !==
+          reverseIndex.sourceId
+      ) {
+        throw new Error(
+          `USED_BY ${String(reverseIndex.id)} has invalid ` +
+          "canonical identity or endpoints",
+        );
+      }
+
+      const dependentNode =
+        this.nodesById.get(
+          reverseIndex.targetId,
+        );
 
       if (dependentNode === undefined) {
         throw new Error(
-          `Fixture edge ${String(edge.id)} references missing node ` +
-          String(edge.sourceId),
+          `USED_BY ${String(reverseIndex.id)} references ` +
+          "a missing dependent node",
         );
       }
 
       hops.push({
         dependentNode,
-        canonicalEdge: edge,
+        canonicalEdge: resolved,
+        traversalIndexEdgeId:
+          reverseIndex.id,
       });
     }
 
@@ -240,212 +772,442 @@ class FixtureGraphReader implements ReadonlyGraphReader {
   public async getEvidence(
     evidenceIds: readonly NodeId[],
   ): Promise<readonly EvidenceNode[]> {
-    const evidenceNodesForIds: EvidenceNode[] = [];
+    const evidence: EvidenceNode[] = [];
 
     for (const evidenceId of evidenceIds) {
       const node = this.nodesById.get(evidenceId);
 
       if (node?.kind === "Evidence") {
-        evidenceNodesForIds.push(node);
+        evidence.push(node);
       }
     }
 
-    return evidenceNodesForIds;
+    return evidence;
   }
 }
 
-function createExposureSignals(
-  stage: ExposureStage,
-): ExposureEvidenceSignals {
-  const semverEligible = stage !== "candidate";
-
-  const exactResolutionEvidenceIds =
-    stage === "candidate" || stage === "semver-eligible"
-      ? []
-      : [RESOLUTION_EVIDENCE_ID];
-
-  const buildEvidenceIds =
-    stage === "built" ||
-    stage === "deployed" ||
-    stage === "runtime-reachable" ||
-    stage === "execution-observed"
-      ? [BUILD_EVIDENCE_ID]
-      : [];
-
-  const deploymentEvidenceIds =
-    stage === "deployed" ||
-    stage === "runtime-reachable" ||
-    stage === "execution-observed"
-      ? [DEPLOYMENT_EVIDENCE_ID]
-      : [];
-
-  const reachabilityEvidenceIds =
-    stage === "runtime-reachable" ||
-    stage === "execution-observed"
-      ? [REACHABILITY_EVIDENCE_ID]
-      : [];
-
-  const executionEvidenceIds =
-    stage === "execution-observed"
-      ? [EXECUTION_EVIDENCE_ID]
-      : [];
-
+function persistenceOptions(
+  store: SuccessfulHydraStore,
+): PersistenceServiceOptions {
   return {
-    semverEligible,
-    exactResolutionEvidenceIds,
-    buildEvidenceIds,
-    deploymentEvidenceIds,
-    reachabilityEvidenceIds,
-    executionEvidenceIds,
+    chunkSize: 1,
+    maxAttempts: 1,
+    retryDelayMs: 0,
+    maxPartialReplays: 0,
+    partialReplayDelayMs: 0,
+    idempotencyKey: "analysis-smoke-v2",
+    correlationId:
+      "analysis-smoke-v2-correlation",
+    sessionFactory: store.sessionFactory,
   };
 }
 
-async function runSmoke(): Promise<void> {
-  const graphSnapshot = JSON.stringify({
-    graphNodes,
-    dependencyEdges,
-  });
-
-  const reader = new FixtureGraphReader(
-    graphNodes,
-    dependencyEdges,
-  );
-
-  const result = await analyzeBlastRadius(
-    reader,
-    [AFFECTED_VERSION_ID, AFFECTED_VERSION_ID],
-  );
-
-  deepEqual(
-    result.affectedVersionIds,
-    [AFFECTED_VERSION_ID],
-  );
-  deepEqual(
-    result.services.map((candidate) => candidate.service.id),
-    [BETA_SERVICE_ID, ALPHA_SERVICE_ID],
-  );
-  equal(result.totalPathCount, 3);
-  equal(result.truncated, false);
-
-  const alphaCandidate = result.services.find(
-    (candidate) =>
-      candidate.service.id === ALPHA_SERVICE_ID,
-  );
-  const betaCandidate = result.services.find(
-    (candidate) =>
-      candidate.service.id === BETA_SERVICE_ID,
-  );
-
-  ok(alphaCandidate);
-  ok(betaCandidate);
-
-  equal(alphaCandidate.minimumDepth, 1);
-  equal(alphaCandidate.paths.length, 2);
-  equal(betaCandidate.minimumDepth, 1);
-  equal(betaCandidate.paths.length, 1);
-
-  ok(
-    alphaCandidate.paths.every((path) =>
-      path.canonicalEdges.every(
-        (edge) =>
-          edge.kind === "DEPENDS_ON" &&
-          edge.derived === false,
-      ),
-    ),
-  );
-
-  ok(
-    result.warnings.some(
-      (warning) => warning.code === "cycle-skipped",
-    ),
-  );
-
-  equal(
-    JSON.stringify({
-      graphNodes,
-      dependencyEdges,
-    }),
-    graphSnapshot,
-    "Blast-radius analysis must not mutate the source graph",
-  );
-
-  const expectedStages: readonly ExposureStage[] = [
-    "candidate",
-    "semver-eligible",
-    "resolved",
-    "built",
-    "deployed",
-    "runtime-reachable",
-    "execution-observed",
-  ];
-
-  const expectedConclusions: readonly SecurityConclusion[] = [
-    "candidate",
-    "candidate",
-    "affected",
-    "affected",
-    "exposed",
-    "reachable",
-    "executed",
-  ];
-
-  const assessments = expectedStages.map((stage) =>
-    classifyExposure(createExposureSignals(stage)),
-  );
-
-  deepEqual(
-    assessments.map((assessment) => assessment.stage),
-    expectedStages,
-  );
-  deepEqual(
-    assessments.map((assessment) => assessment.conclusion),
-    expectedConclusions,
-  );
-
-  const executedAssessment = assessments.find(
-    (assessment) =>
-      assessment.stage === "execution-observed",
-  );
-
-  ok(executedAssessment);
-  deepEqual(executedAssessment.evidenceIds, [
-    RESOLUTION_EVIDENCE_ID,
-    BUILD_EVIDENCE_ID,
-    DEPLOYMENT_EVIDENCE_ID,
-    REACHABILITY_EVIDENCE_ID,
-    EXECUTION_EVIDENCE_ID,
-  ]);
-  deepEqual(executedAssessment.uncertainties, []);
-
-  const outOfOrderAssessment = classifyExposure({
+function exposureSignals(
+  fixture: AnalysisFixture,
+): ExposureEvidenceSignals {
+  return {
     semverEligible: true,
-    exactResolutionEvidenceIds: [],
-    buildEvidenceIds: [],
-    deploymentEvidenceIds: [DEPLOYMENT_EVIDENCE_ID],
-    reachabilityEvidenceIds: [],
-    executionEvidenceIds: [],
-  });
+    exactResolutionEvidenceIds: [
+      fixture.resolutionEvidence.id,
+    ],
+    buildEvidenceIds: [
+      fixture.buildEvidence.id,
+    ],
+    deploymentEvidenceIds: [
+      fixture.deploymentEvidence.id,
+    ],
+    reachabilityEvidenceIds: [
+      fixture.reachabilityEvidence.id,
+    ],
+    executionEvidenceIds: [
+      fixture.executionEvidence.id,
+    ],
+  };
+}
 
-  equal(outOfOrderAssessment.stage, "semver-eligible");
-  equal(outOfOrderAssessment.conclusion, "candidate");
-  deepEqual(outOfOrderAssessment.evidenceIds, []);
+async function verifyProductionPath(
+  fixture: AnalysisFixture,
+  reader: BatchGraphReader,
+): Promise<void> {
+  const store = new SuccessfulHydraStore();
+  const service =
+    new HydraPersistenceService(
+      {} as Driver,
+    );
 
-  const resolvedEvidence = await reader.getEvidence([
-    RESOLUTION_EVIDENCE_ID,
-  ]);
+  const report =
+    await service.persistThenAnalyze(
+      fixture.batch,
+      (persisted) =>
+        runBlastRadius(
+          persisted,
+          reader,
+          [fixture.affectedVersion.id],
+        ),
+      persistenceOptions(store),
+    );
 
-  equal(resolvedEvidence.length, 1);
-  equal(resolvedEvidence[0]?.kind, "Evidence");
+  assert.match(report.batchHash, /^[a-f0-9]{64}$/);
+  assert.equal(
+    report.correlationId,
+    "analysis-smoke-v2-correlation",
+  );
+  assert.equal(report.totalPathCount, 3);
+  assert.equal(report.services.length, 2);
+  assert.equal(report.truncated, false);
 
-  console.log(
-    "analysis smoke passed: " +
-    `${String(result.services.length)} services, ` +
-    `${String(result.totalPathCount)} paths, ` +
-    `${String(assessments.length)} exposure stages`,
+  const alphaCandidate = report.services.find(
+    (candidate) =>
+      candidate.service.id ===
+      fixture.alphaService.id,
+  );
+  const betaCandidate = report.services.find(
+    (candidate) =>
+      candidate.service.id ===
+      fixture.betaService.id,
+  );
+
+  assert.ok(alphaCandidate);
+  assert.ok(betaCandidate);
+  assert.equal(alphaCandidate.paths.length, 2);
+  assert.equal(alphaCandidate.minimumDepth, 1);
+  assert.equal(betaCandidate.paths.length, 1);
+
+  assert.ok(
+    report.warnings.some(
+      (warning) =>
+        warning.code === "cycle-skipped",
+    ),
+  );
+
+  assert.equal(
+    store.sessionsClosed,
+    store.sessionsCreated,
+    "Every persistence session must close",
   );
 }
 
-void runSmoke().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+async function verifyDerivedResolution(
+  fixture: AnalysisFixture,
+  reader: BatchGraphReader,
+): Promise<void> {
+  const hops = await reader.findDependents(
+    fixture.affectedVersion.id,
+  );
+
+  assert.ok(hops.length >= 3);
+
+  for (const hop of hops) {
+    assert.equal(
+      hop.canonicalEdge.kind,
+      "DEPENDS_ON",
+    );
+    assert.equal(
+      hop.canonicalEdge.derived,
+      false,
+    );
+    assert.equal(
+      hop.canonicalEdge.targetId,
+      fixture.affectedVersion.id,
+    );
+    assert.notEqual(
+      hop.traversalIndexEdgeId,
+      undefined,
+    );
+  }
+}
+
+async function verifyEvidenceValidation(
+  fixture: AnalysisFixture,
+  reader: BatchGraphReader,
+): Promise<void> {
+  const assessment =
+    await classifyExposureWithValidatedEvidence(
+      reader,
+      exposureSignals(fixture),
+    );
+
+  assert.equal(
+    assessment.stage,
+    "execution-observed",
+  );
+  assert.equal(
+    assessment.conclusion,
+    "executed",
+  );
+  assert.equal(
+    assessment.evidenceIds.length,
+    5,
+  );
+
+  await assert.rejects(
+    classifyExposureWithValidatedEvidence(
+      reader,
+      {
+        ...exposureSignals(fixture),
+        executionEvidenceIds: [
+          Number.MAX_SAFE_INTEGER,
+        ],
+      },
+    ),
+    (error: unknown) =>
+      error instanceof
+        ExposureEvidenceValidationError &&
+      error.code === "missing-evidence",
+  );
+
+  await assert.rejects(
+    classifyExposureWithValidatedEvidence(
+      reader,
+      {
+        ...exposureSignals(fixture),
+        executionEvidenceIds: [
+          fixture.alphaService.id,
+        ],
+      },
+    ),
+    (error: unknown) =>
+      error instanceof
+        ExposureEvidenceValidationError &&
+      error.code === "wrong-evidence-kind",
+  );
+}
+
+async function verifyTraversalLimits(
+  fixture: AnalysisFixture,
+  reader: BatchGraphReader,
+): Promise<void> {
+  const roots = [fixture.affectedVersion.id];
+
+  const stateLimited = await analyzeBlastRadius(
+    reader,
+    roots,
+    {
+      maxTraversalStates: 1,
+    },
+  );
+
+  assert.equal(stateLimited.truncated, true);
+  assert.ok(
+    stateLimited.warnings.some(
+      (warning) =>
+        warning.code ===
+        "traversal-state-limit-reached",
+    ),
+  );
+
+  const fanOutLimited = await analyzeBlastRadius(
+    reader,
+    roots,
+    {
+      maxDependentsPerNode: 1,
+    },
+  );
+
+  assert.equal(fanOutLimited.truncated, true);
+  assert.ok(
+    fanOutLimited.warnings.some(
+      (warning) =>
+        warning.code ===
+        "dependents-per-node-limit-reached",
+    ),
+  );
+
+  const depthLimited = await analyzeBlastRadius(
+    reader,
+    roots,
+    {
+      maxDepth: 1,
+    },
+  );
+
+  assert.equal(depthLimited.truncated, true);
+  assert.ok(
+    depthLimited.warnings.some(
+      (warning) =>
+        warning.code ===
+        "depth-limit-reached",
+    ),
+  );
+
+  const perServiceLimited =
+    await analyzeBlastRadius(
+      reader,
+      roots,
+      {
+        maxPathsPerService: 1,
+      },
+    );
+
+  assert.equal(perServiceLimited.truncated, true);
+  assert.ok(
+    perServiceLimited.warnings.some(
+      (warning) =>
+        warning.code ===
+        "paths-per-service-limit-reached",
+    ),
+  );
+
+  const totalPathLimited =
+    await analyzeBlastRadius(
+      reader,
+      roots,
+      {
+        maxTotalPaths: 1,
+      },
+    );
+
+  assert.equal(totalPathLimited.truncated, true);
+  assert.ok(
+    totalPathLimited.warnings.some(
+      (warning) =>
+        warning.code ===
+        "path-limit-reached",
+    ),
+  );
+
+  const warningLimited =
+    await analyzeBlastRadius(
+      reader,
+      [
+        Number.MAX_SAFE_INTEGER - 1,
+        Number.MAX_SAFE_INTEGER,
+      ],
+      {
+        maxWarnings: 1,
+      },
+    );
+
+  assert.equal(warningLimited.truncated, true);
+  assert.deepEqual(
+    warningLimited.warnings.map(
+      (warning) => warning.code,
+    ),
+    ["warning-limit-reached"],
+  );
+}
+
+async function verifyMalformedCanonicalHop(
+  fixture: AnalysisFixture,
+  reader: BatchGraphReader,
+): Promise<void> {
+  const malformedCanonical = {
+    ...fixture.alphaDirectPair.canonical,
+    derived: true,
+  } as unknown as DependencyEdge;
+
+  const malformedReader: ReadonlyGraphReader = {
+    getNode: (nodeId) =>
+      reader.getNode(nodeId),
+
+    findDependents: async (nodeId) =>
+      nodeId === fixture.affectedVersion.id
+        ? [
+            {
+              dependentNode:
+                fixture.alphaService,
+              canonicalEdge:
+                malformedCanonical,
+            },
+          ]
+        : [],
+
+    getEvidence: (evidenceIds) =>
+      reader.getEvidence(evidenceIds),
+  };
+
+  const result = await analyzeBlastRadius(
+    malformedReader,
+    [fixture.affectedVersion.id],
+  );
+
+  assert.equal(result.services.length, 0);
+  assert.ok(
+    result.warnings.some(
+      (warning) =>
+        warning.code ===
+        "invalid-canonical-hop",
+    ),
+  );
+}
+
+async function main(): Promise<void> {
+  const fixture = createFixture();
+
+  assert.equal(
+    fixture.batch.validation.valid,
+    true,
+  );
+  assert.equal(
+    Object.isFrozen(fixture.batch),
+    true,
+  );
+  assert.equal(
+    Object.isFrozen(fixture.batch.nodes),
+    true,
+  );
+  assert.equal(
+    Object.isFrozen(fixture.batch.edges),
+    true,
+  );
+
+  const sourceSnapshot =
+    JSON.stringify(fixture.batch);
+
+  const reader =
+    new BatchGraphReader(fixture.batch);
+
+  await verifyDerivedResolution(
+    fixture,
+    reader,
+  );
+  await verifyProductionPath(
+    fixture,
+    reader,
+  );
+  await verifyEvidenceValidation(
+    fixture,
+    reader,
+  );
+  await verifyTraversalLimits(
+    fixture,
+    reader,
+  );
+  await verifyMalformedCanonicalHop(
+    fixture,
+    reader,
+  );
+
+  assert.equal(
+    JSON.stringify(fixture.batch),
+    sourceSnapshot,
+    "Analysis must not mutate the immutable source graph",
+  );
+
+  console.log(
+    "HydraSCOPE analysis smoke passed",
+  );
+  console.log(
+    "- deterministic identities and GraphBatch validation passed",
+  );
+  console.log(
+    "- DEPENDS_ON and USED_BY parity passed",
+  );
+  console.log(
+    "- verified persistence gated production analysis",
+  );
+  console.log(
+    "- evidence existence and node-kind validation passed",
+  );
+  console.log(
+    "- traversal, fan-out, depth, path, and warning limits passed",
+  );
+  console.log(
+    "- malformed canonical hops fail closed",
+  );
+  console.log(
+    "- immutable source graph remained unchanged",
+  );
+}
+
+await main();
