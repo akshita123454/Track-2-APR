@@ -101,7 +101,10 @@ function requireString(
   value: unknown,
   description: string,
 ): string {
-  assert.equal(typeof value, "string", `${description} must be a string`);
+  if (typeof value !== "string") {
+    throw new TypeError(`${description} must be a string`);
+  }
+
   return value;
 }
 
@@ -109,11 +112,16 @@ function requireNumber(
   value: unknown,
   description: string,
 ): number {
-  assert.equal(typeof value, "number", `${description} must be a number`);
-  assert.ok(
-    Number.isSafeInteger(value) && value >= 0,
-    `${description} must be a nonnegative safe integer`,
-  );
+  if (typeof value !== "number") {
+    throw new TypeError(`${description} must be a number`);
+  }
+
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(
+      `${description} must be a nonnegative safe integer`,
+    );
+  }
+
   return value;
 }
 
