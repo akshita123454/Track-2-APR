@@ -104,6 +104,26 @@ export interface BlastRadiusOptions {
    * Maximum number of distinct paths retained across the complete result.
    */
   readonly maxTotalPaths?: number;
+
+  /**
+   * Maximum number of traversal states admitted across all roots.
+   *
+   * This bounds work even when traversal does not reach a Service.
+   */
+  readonly maxTraversalStates?: number;
+
+  /**
+   * Maximum number of deterministically sorted dependents expanded for one
+   * node.
+   */
+  readonly maxDependentsPerNode?: number;
+
+  /**
+   * Maximum number of warnings retained before traversal stops.
+   *
+   * One warning slot is reserved for the warning-limit notification.
+   */
+  readonly maxWarnings?: number;
 }
 
 /**
@@ -114,6 +134,9 @@ export interface AppliedBlastRadiusLimits {
   readonly maxServices: number;
   readonly maxPathsPerService: number;
   readonly maxTotalPaths: number;
+  readonly maxTraversalStates: number;
+  readonly maxDependentsPerNode: number;
+  readonly maxWarnings: number;
 }
 
 /**
@@ -165,6 +188,9 @@ export type AnalysisWarningCode =
   | "service-limit-reached"
   | "path-limit-reached"
   | "paths-per-service-limit-reached"
+  | "traversal-state-limit-reached"
+  | "dependents-per-node-limit-reached"
+  | "warning-limit-reached"
   | "missing-node"
   | "invalid-canonical-hop"
   | "unsupported-root-node";

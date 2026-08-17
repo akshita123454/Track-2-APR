@@ -19,6 +19,9 @@ const DEFAULT_LIMITS: AppliedBlastRadiusLimits = {
   maxServices: 100,
   maxPathsPerService: 10,
   maxTotalPaths: 1_000,
+  maxTraversalStates: 10_000,
+  maxDependentsPerNode: 1_000,
+  maxWarnings: 100,
 };
 
 interface TraversalState {
@@ -91,6 +94,21 @@ function normalizeLimits(
       DEFAULT_LIMITS.maxTotalPaths,
       "maxTotalPaths",
     ),
+    maxTraversalStates: readPositiveSafeInteger(
+      options.maxTraversalStates,
+      DEFAULT_LIMITS.maxTraversalStates,
+      "maxTraversalStates",
+    ),
+    maxDependentsPerNode: readPositiveSafeInteger(
+      options.maxDependentsPerNode,
+      DEFAULT_LIMITS.maxDependentsPerNode,
+      "maxDependentsPerNode",
+    ),
+    maxWarnings: readPositiveSafeInteger(
+      options.maxWarnings,
+      DEFAULT_LIMITS.maxWarnings,
+      "maxWarnings",
+    ),
   };
 }
 
@@ -100,7 +118,10 @@ function compareDependencyHops(
 ): number {
   return (
     left.canonicalEdge.id - right.canonicalEdge.id ||
-    compareNodeIds(left.dependentNode.id, right.dependentNode.id)
+    compareNodeIds(
+      left.dependentNode.id,
+      right.dependentNode.id,
+    )
   );
 }
 
@@ -144,7 +165,9 @@ function createBlastRadiusPath(
   };
 }
 
-function warningKey(warning: AnalysisWarning): string {
+function warningKey(
+  warning: AnalysisWarning,
+): string {
   return JSON.stringify([
     warning.code,
     warning.message,
@@ -159,7 +182,10 @@ function compareWarnings(
 ): number {
   return (
     compareText(left.code, right.code) ||
-    compareNodeIds(left.nodeId ?? 0, right.nodeId ?? 0) ||
+    compareNodeIds(
+      left.nodeId ?? 0,
+      right.nodeId ?? 0,
+    ) ||
     compareText(
       left.pathNodeIds
         ?.map((nodeId) => String(nodeId))
@@ -203,17 +229,76 @@ export async function analyzeBlastRadius(
   const enqueuedTraversalKeys = new Set<string>();
 
   let totalPathCount = 0;
+  let admittedTraversalStates = 0;
   let truncated = false;
+  let warningLimitReached = false;
+  let stopTraversal = false;
 
-  const addWarning = (warning: AnalysisWarning): void => {
+  const addWarning = (
+    warning: AnalysisWarning,
+  ): void => {
     const key = warningKey(warning);
 
-    if (recordedWarningKeys.has(key)) {
+    if (
+      recordedWarningKeys.has(key) ||
+      warningLimitReached
+    ) {
+      return;
+    }
+
+    /*
+     * Reserve the final warning slot for a deterministic notification that
+     * the warning budget itself was reached.
+     */
+    const maximumRegularWarnings =
+      limits.maxWarnings - 1;
+
+    if (warnings.length >= maximumRegularWarnings) {
+      warningLimitReached = true;
+      truncated = true;
+      stopTraversal = true;
+
+      const warningLimitNotification: AnalysisWarning = {
+        code: "warning-limit-reached",
+        message:
+          `Warning limit of ${limits.maxWarnings} was reached; ` +
+          "traversal stopped",
+      };
+
+      recordedWarningKeys.add(
+        warningKey(warningLimitNotification),
+      );
+      warnings.push(warningLimitNotification);
       return;
     }
 
     recordedWarningKeys.add(key);
     warnings.push(warning);
+  };
+
+  const admitTraversalState = (
+    nodeId: NodeId,
+    pathNodeIds: readonly NodeId[],
+  ): boolean => {
+    if (
+      admittedTraversalStates <
+      limits.maxTraversalStates
+    ) {
+      admittedTraversalStates += 1;
+      return true;
+    }
+
+    truncated = true;
+    addWarning({
+      code: "traversal-state-limit-reached",
+      message:
+        `Traversal state limit of ` +
+        `${limits.maxTraversalStates} was reached`,
+      nodeId,
+      pathNodeIds,
+    });
+    stopTraversal = true;
+    return false;
   };
 
   const findSortedDependents = async (
@@ -235,7 +320,13 @@ export async function analyzeBlastRadius(
 
   rootTraversal:
   for (const affectedVersionId of sortedAffectedVersionIds) {
-    const rootNode = await reader.getNode(affectedVersionId);
+    if (stopTraversal) {
+      break;
+    }
+
+    const rootNode = await reader.getNode(
+      affectedVersionId,
+    );
 
     if (rootNode === null) {
       addWarning({
@@ -245,6 +336,11 @@ export async function analyzeBlastRadius(
           "was not found",
         nodeId: affectedVersionId,
       });
+
+      if (stopTraversal) {
+        break;
+      }
+
       continue;
     }
 
@@ -256,7 +352,21 @@ export async function analyzeBlastRadius(
           "a PackageVersion",
         nodeId: affectedVersionId,
       });
+
+      if (stopTraversal) {
+        break;
+      }
+
       continue;
+    }
+
+    if (
+      !admitTraversalState(
+        rootNode.id,
+        [rootNode.id],
+      )
+    ) {
+      break;
     }
 
     const initialTraversalKey = createTraversalKey(
@@ -279,6 +389,10 @@ export async function analyzeBlastRadius(
     let queueIndex = 0;
 
     while (queueIndex < queue.length) {
+      if (stopTraversal) {
+        break rootTraversal;
+      }
+
       const state = queue[queueIndex];
       queueIndex += 1;
 
@@ -288,7 +402,10 @@ export async function analyzeBlastRadius(
 
       if (state.currentNode.kind === "Service") {
         const service = state.currentNode;
-        const path = createBlastRadiusPath(state, service);
+        const path = createBlastRadiusPath(
+          state,
+          service,
+        );
         let candidate = servicesById.get(service.id);
 
         if (
@@ -306,27 +423,43 @@ export async function analyzeBlastRadius(
           addWarning({
             code: "service-limit-reached",
             message:
-              `Service result limit of ${limits.maxServices} ` +
-              "was reached",
+              `Service result limit of ` +
+              `${limits.maxServices} was reached`,
             nodeId: service.id,
-            pathNodeIds: state.nodes.map((node) => node.id),
+            pathNodeIds: state.nodes.map(
+              (node) => node.id,
+            ),
           });
+
+          if (stopTraversal) {
+            break rootTraversal;
+          }
+
           continue;
         }
 
         if (
           candidate !== undefined &&
-          candidate.paths.length >= limits.maxPathsPerService
+          candidate.paths.length >=
+            limits.maxPathsPerService
         ) {
           truncated = true;
           addWarning({
             code: "paths-per-service-limit-reached",
             message:
-              `Path limit of ${limits.maxPathsPerService} was ` +
-              `reached for Service ${String(service.id)}`,
+              `Path limit of ` +
+              `${limits.maxPathsPerService} was reached ` +
+              `for Service ${String(service.id)}`,
             nodeId: service.id,
-            pathNodeIds: state.nodes.map((node) => node.id),
+            pathNodeIds: state.nodes.map(
+              (node) => node.id,
+            ),
           });
+
+          if (stopTraversal) {
+            break rootTraversal;
+          }
+
           continue;
         }
 
@@ -335,20 +468,24 @@ export async function analyzeBlastRadius(
           addWarning({
             code: "path-limit-reached",
             message:
-              `Total path limit of ${limits.maxTotalPaths} ` +
-              "was reached",
+              `Total path limit of ` +
+              `${limits.maxTotalPaths} was reached`,
             nodeId: service.id,
-            pathNodeIds: state.nodes.map((node) => node.id),
+            pathNodeIds: state.nodes.map(
+              (node) => node.id,
+            ),
           });
+          stopTraversal = true;
           break rootTraversal;
         }
 
         if (candidate === undefined) {
-          const newCandidate: MutableServiceCandidate = {
-            service,
-            paths: [],
-            pathKeys: new Set<string>(),
-          };
+          const newCandidate:
+            MutableServiceCandidate = {
+              service,
+              paths: [],
+              pathKeys: new Set<string>(),
+            };
 
           servicesById.set(service.id, newCandidate);
           candidate = newCandidate;
@@ -360,50 +497,106 @@ export async function analyzeBlastRadius(
         continue;
       }
 
-      const dependentHops = await findSortedDependents(
-        state.currentNode.id,
-      );
+      const allDependentHops =
+        await findSortedDependents(
+          state.currentNode.id,
+        );
+
+      let dependentHops = allDependentHops;
+
+      if (
+        allDependentHops.length >
+        limits.maxDependentsPerNode
+      ) {
+        truncated = true;
+        addWarning({
+          code: "dependents-per-node-limit-reached",
+          message:
+            `Dependent limit of ` +
+            `${limits.maxDependentsPerNode} was reached ` +
+            `for node ${String(state.currentNode.id)}; ` +
+            "remaining dependents were not expanded",
+          nodeId: state.currentNode.id,
+          pathNodeIds: state.nodes.map(
+            (node) => node.id,
+          ),
+        });
+
+        if (stopTraversal) {
+          break rootTraversal;
+        }
+
+        dependentHops = allDependentHops.slice(
+          0,
+          limits.maxDependentsPerNode,
+        );
+      }
+
       let depthWarningAdded = false;
 
       for (const hop of dependentHops) {
+        if (stopTraversal) {
+          break rootTraversal;
+        }
+
         const canonicalEdge = hop.canonicalEdge;
         const dependentNode = hop.dependentNode;
 
         const isCanonicalHop =
           canonicalEdge.kind === "DEPENDS_ON" &&
-          canonicalEdge.targetId === state.currentNode.id &&
-          canonicalEdge.sourceId === dependentNode.id;
+          canonicalEdge.derived === false &&
+          canonicalEdge.targetId ===
+            state.currentNode.id &&
+          canonicalEdge.sourceId ===
+            dependentNode.id;
 
         if (!isCanonicalHop) {
           addWarning({
             code: "invalid-canonical-hop",
             message:
               `Edge ${String(canonicalEdge.id)} is not a ` +
-              `canonical DEPENDS_ON hop from ` +
+              `canonical non-derived DEPENDS_ON hop from ` +
               `${String(dependentNode.id)} to ` +
               `${String(state.currentNode.id)}`,
             nodeId: dependentNode.id,
-            pathNodeIds: state.nodes.map((node) => node.id),
+            pathNodeIds: state.nodes.map(
+              (node) => node.id,
+            ),
           });
+
+          if (stopTraversal) {
+            break rootTraversal;
+          }
+
           continue;
         }
 
-        if (state.visitedNodeIds.has(dependentNode.id)) {
+        if (
+          state.visitedNodeIds.has(dependentNode.id)
+        ) {
           addWarning({
             code: "cycle-skipped",
             message:
-              `Cycle through node ${String(dependentNode.id)} ` +
-              "was skipped",
+              `Cycle through node ` +
+              `${String(dependentNode.id)} was skipped`,
             nodeId: dependentNode.id,
             pathNodeIds: [
               ...state.nodes.map((node) => node.id),
               dependentNode.id,
             ],
           });
+
+          if (stopTraversal) {
+            break rootTraversal;
+          }
+
           continue;
         }
 
-        if (state.canonicalEdges.length >= limits.maxDepth) {
+        if (
+          state.canonicalEdges.length >=
+          limits.maxDepth
+        ) {
           truncated = true;
 
           if (!depthWarningAdded) {
@@ -411,14 +604,20 @@ export async function analyzeBlastRadius(
             addWarning({
               code: "depth-limit-reached",
               message:
-                `Traversal depth limit of ${limits.maxDepth} ` +
-                "was reached",
+                `Traversal depth limit of ` +
+                `${limits.maxDepth} was reached`,
               nodeId: state.currentNode.id,
               pathNodeIds: [
-                ...state.nodes.map((node) => node.id),
+                ...state.nodes.map(
+                  (node) => node.id,
+                ),
                 dependentNode.id,
               ],
             });
+          }
+
+          if (stopTraversal) {
+            break rootTraversal;
           }
 
           continue;
@@ -433,8 +632,24 @@ export async function analyzeBlastRadius(
           nextCanonicalEdges,
         );
 
-        if (enqueuedTraversalKeys.has(nextTraversalKey)) {
+        if (
+          enqueuedTraversalKeys.has(nextTraversalKey)
+        ) {
           continue;
+        }
+
+        const nextPathNodeIds = [
+          ...state.nodes.map((node) => node.id),
+          dependentNode.id,
+        ];
+
+        if (
+          !admitTraversalState(
+            dependentNode.id,
+            nextPathNodeIds,
+          )
+        ) {
+          break rootTraversal;
         }
 
         enqueuedTraversalKeys.add(nextTraversalKey);
@@ -444,9 +659,13 @@ export async function analyzeBlastRadius(
         nextVisitedNodeIds.add(dependentNode.id);
 
         queue.push({
-          affectedVersionId: state.affectedVersionId,
+          affectedVersionId:
+            state.affectedVersionId,
           currentNode: dependentNode,
-          nodes: [...state.nodes, dependentNode],
+          nodes: [
+            ...state.nodes,
+            dependentNode,
+          ],
           canonicalEdges: nextCanonicalEdges,
           visitedNodeIds: nextVisitedNodeIds,
         });
@@ -458,7 +677,10 @@ export async function analyzeBlastRadius(
     .map((candidate) => {
       const paths = [...candidate.paths].sort(
         (left, right) =>
-          compareText(left.pathKey, right.pathKey),
+          compareText(
+            left.pathKey,
+            right.pathKey,
+          ),
       );
 
       return {
@@ -470,7 +692,10 @@ export async function analyzeBlastRadius(
       };
     })
     .sort((left, right) =>
-      compareNodeIds(left.service.id, right.service.id),
+      compareNodeIds(
+        left.service.id,
+        right.service.id,
+      ),
     );
 
   return {
