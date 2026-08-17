@@ -9,8 +9,10 @@
     "validate:fixture": "tsx src/domain/fixture.ts",
     "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts",
     "validate:graph-batch": "tsx src/ingest/graph-batch-smoke.ts",
-    "validate:orchestrator": "tsx src/ingest/npm/orchestrator-smoke.ts"
-
+    "validate:orchestrator": "tsx src/ingest/npm/orchestrator-smoke.ts",
+    "validate:persistence": "tsx src/db/persistence-smoke.ts",
+    "demo:preload": "tsx src/demo/preload.ts",
+    "validate:persistence-service": "tsx src/db/persistence-service-smoke.ts"
   },
   "dependencies": {
     "neo4j-driver": "6.2.0"
