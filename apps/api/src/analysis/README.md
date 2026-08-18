@@ -24,7 +24,12 @@ The public entry point is:
 ```typescript
 runBlastRadius(
   persisted,
-  reader,
   affectedVersionIds,
   options,
 )
+```
+
+The production entry point constructs its reader from `persisted.batch`.
+Callers cannot supply an unrelated graph reader. Internal readers must apply
+fan-out bounds while reading and return a bounded page with an explicit
+truncation signal.

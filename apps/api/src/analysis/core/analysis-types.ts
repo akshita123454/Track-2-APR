@@ -59,6 +59,28 @@ export interface DependencyHop {
    */
   readonly traversalIndexEdgeId?: EdgeId;
 }
+/**
+ * Required bound for one reverse-dependency lookup.
+ *
+ * Readers must apply this limit while reading/querying, not after returning
+ * an unbounded collection.
+ */
+export interface FindDependentsOptions {
+  readonly limit: number;
+}
+
+/**
+ * Deterministically ordered, bounded reverse-dependency result.
+ */
+export interface DependencyHopPage {
+  readonly hops: readonly DependencyHop[];
+
+  /**
+   * True when additional valid dependents existed beyond the requested
+   * limit.
+   */
+  readonly truncated: boolean;
+}
 
 /**
  * Read-only graph access required by the pure analysis layer.
@@ -73,8 +95,10 @@ export interface ReadonlyGraphReader {
    * Finds nodes with canonical DEPENDS_ON edges targeting nodeId.
    */
   findDependents(
-    nodeId: NodeId,
-  ): Promise<readonly DependencyHop[]>;
+  nodeId: NodeId,
+  options: FindDependentsOptions,
+): Promise<DependencyHopPage>;
+
 
   getEvidence(
     evidenceIds: readonly NodeId[],

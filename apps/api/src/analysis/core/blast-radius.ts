@@ -11,6 +11,7 @@ import type {
   BlastRadiusPath,
   BlastRadiusResult,
   DependencyHop,
+  DependencyHopPage,
   ReadonlyGraphReader,
 } from "./analysis-types.js";
 
@@ -225,7 +226,7 @@ export async function analyzeBlastRadius(
   const servicesById =
     new Map<NodeId, MutableServiceCandidate>();
   const dependentsCache =
-    new Map<NodeId, readonly DependencyHop[]>();
+    new Map<NodeId, DependencyHopPage>();
   const enqueuedTraversalKeys = new Set<string>();
 
   let totalPathCount = 0;
@@ -303,20 +304,45 @@ export async function analyzeBlastRadius(
 
   const findSortedDependents = async (
     nodeId: NodeId,
-  ): Promise<readonly DependencyHop[]> => {
+  ): Promise<DependencyHopPage> => {
     const cached = dependentsCache.get(nodeId);
 
     if (cached !== undefined) {
       return cached;
     }
 
-    const dependents = [
-      ...(await reader.findDependents(nodeId)),
-    ].sort(compareDependencyHops);
+    const page = await reader.findDependents(
+      nodeId,
+      {
+        limit: limits.maxDependentsPerNode,
+      },
+    );
 
-    dependentsCache.set(nodeId, dependents);
-    return dependents;
+    if (
+      page.hops.length >
+      limits.maxDependentsPerNode
+    ) {
+      throw new Error(
+        "ReadonlyGraphReader violated the bounded " +
+          "findDependents contract",
+      );
+    }
+
+    /*
+    * Sorting remains defensive, but the input is already bounded by the
+    * reader contract.
+    */
+    const boundedPage: DependencyHopPage = {
+      hops: [...page.hops].sort(
+        compareDependencyHops,
+      ),
+      truncated: page.truncated,
+    };
+
+    dependentsCache.set(nodeId, boundedPage);
+    return boundedPage;
   };
+
 
   rootTraversal:
   for (const affectedVersionId of sortedAffectedVersionIds) {
@@ -497,18 +523,17 @@ export async function analyzeBlastRadius(
         continue;
       }
 
-      const allDependentHops =
+      const dependentPage =
         await findSortedDependents(
           state.currentNode.id,
         );
 
-      let dependentHops = allDependentHops;
+      const dependentHops =
+        dependentPage.hops;
 
-      if (
-        allDependentHops.length >
-        limits.maxDependentsPerNode
-      ) {
+      if (dependentPage.truncated) {
         truncated = true;
+
         addWarning({
           code: "dependents-per-node-limit-reached",
           message:
@@ -525,12 +550,8 @@ export async function analyzeBlastRadius(
         if (stopTraversal) {
           break rootTraversal;
         }
-
-        dependentHops = allDependentHops.slice(
-          0,
-          limits.maxDependentsPerNode,
-        );
       }
+
 
       let depthWarningAdded = false;
 

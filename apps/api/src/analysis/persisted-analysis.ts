@@ -10,8 +10,10 @@ import {
 import type {
   BlastRadiusOptions,
   BlastRadiusResult,
-  ReadonlyGraphReader,
 } from "./core/analysis-types.js";
+import {
+  GraphBatchReader,
+} from "./readers/graph-batch-reader.js";
 
 /**
  * Blast-radius output linked to the verified persistence operation that
@@ -35,10 +37,16 @@ export interface PersistedBlastRadiusResult
  */
 export async function runBlastRadius(
   persisted: PersistedGraphBatch,
-  reader: ReadonlyGraphReader,
   affectedVersionIds: readonly NodeId[],
   options: BlastRadiusOptions = {},
 ): Promise<PersistedBlastRadiusResult> {
+  /*
+   * The caller cannot inject a reader for another graph. Analysis is
+   * constructed from the exact immutable batch that persistence verified.
+   */
+  const reader =
+    new GraphBatchReader(persisted.batch);
+
   const result = await analyzeBlastRadius(
     reader,
     affectedVersionIds,

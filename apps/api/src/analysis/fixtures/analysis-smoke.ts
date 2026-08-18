@@ -4,6 +4,9 @@ import type {
   Driver,
   Session,
 } from "neo4j-driver";
+import {
+  GraphBatchReader,
+} from "../readers/graph-batch-reader.js";
 
 import {
   HydraPersistenceService,
@@ -23,7 +26,6 @@ import {
 } from "../../domain/identity.js";
 import type {
   DependencyEdge,
-  DerivedEdge,
   EvidenceNode,
   GraphEdge,
   GraphNode,
@@ -677,114 +679,7 @@ function createFixture(): AnalysisFixture {
   };
 }
 
-class BatchGraphReader implements ReadonlyGraphReader {
-  private readonly nodesById =
-    new Map<NodeId, GraphNode>();
 
-  private readonly edgesById =
-    new Map<number, GraphEdge>();
-
-  public constructor(
-    private readonly batch: GraphBatch,
-  ) {
-    for (const node of batch.nodes) {
-      this.nodesById.set(node.id, node);
-    }
-
-    for (const edge of batch.edges) {
-      this.edgesById.set(edge.id, edge);
-    }
-  }
-
-  public async getNode(
-    nodeId: NodeId,
-  ): Promise<GraphNode | null> {
-    return this.nodesById.get(nodeId) ?? null;
-  }
-
-  public async findDependents(
-    nodeId: NodeId,
-  ): Promise<readonly DependencyHop[]> {
-    const reverseIndexes = this.batch.edges
-      .filter(
-        (edge): edge is DerivedEdge =>
-          edge.kind === "USED_BY" &&
-          edge.sourceId === nodeId,
-      )
-      .sort((left, right) => left.id - right.id);
-
-    const hops: DependencyHop[] = [];
-
-    for (const reverseIndex of reverseIndexes) {
-      const resolved =
-        this.edgesById.get(
-          reverseIndex.derivedFrom,
-        );
-
-      if (
-        resolved === undefined ||
-        resolved.kind !== "DEPENDS_ON" ||
-        resolved.derived !== false
-      ) {
-        throw new Error(
-          `USED_BY ${String(reverseIndex.id)} does not resolve ` +
-          "to canonical DEPENDS_ON",
-        );
-      }
-
-      if (
-        reverseIndex.derivedFromLogicalId !==
-          resolved.logicalId ||
-        resolved.sourceId !==
-          reverseIndex.targetId ||
-        resolved.targetId !==
-          reverseIndex.sourceId
-      ) {
-        throw new Error(
-          `USED_BY ${String(reverseIndex.id)} has invalid ` +
-          "canonical identity or endpoints",
-        );
-      }
-
-      const dependentNode =
-        this.nodesById.get(
-          reverseIndex.targetId,
-        );
-
-      if (dependentNode === undefined) {
-        throw new Error(
-          `USED_BY ${String(reverseIndex.id)} references ` +
-          "a missing dependent node",
-        );
-      }
-
-      hops.push({
-        dependentNode,
-        canonicalEdge: resolved,
-        traversalIndexEdgeId:
-          reverseIndex.id,
-      });
-    }
-
-    return hops;
-  }
-
-  public async getEvidence(
-    evidenceIds: readonly NodeId[],
-  ): Promise<readonly EvidenceNode[]> {
-    const evidence: EvidenceNode[] = [];
-
-    for (const evidenceId of evidenceIds) {
-      const node = this.nodesById.get(evidenceId);
-
-      if (node?.kind === "Evidence") {
-        evidence.push(node);
-      }
-    }
-
-    return evidence;
-  }
-}
 
 function persistenceOptions(
   store: SuccessfulHydraStore,
@@ -827,7 +722,6 @@ function exposureSignals(
 
 async function verifyProductionPath(
   fixture: AnalysisFixture,
-  reader: BatchGraphReader,
 ): Promise<void> {
   const store = new SuccessfulHydraStore();
   const service =
@@ -841,7 +735,6 @@ async function verifyProductionPath(
       (persisted) =>
         runBlastRadius(
           persisted,
-          reader,
           [fixture.affectedVersion.id],
         ),
       persistenceOptions(store),
@@ -889,13 +782,21 @@ async function verifyProductionPath(
 
 async function verifyDerivedResolution(
   fixture: AnalysisFixture,
-  reader: BatchGraphReader,
+  reader: GraphBatchReader,
 ): Promise<void> {
-  const hops = await reader.findDependents(
+  const page = await reader.findDependents(
     fixture.affectedVersion.id,
+    {
+      limit: 100,
+    },
   );
 
+  assert.equal(page.truncated, false);
+
+  const hops = page.hops;
+
   assert.ok(hops.length >= 3);
+
 
   for (const hop of hops) {
     assert.equal(
@@ -919,7 +820,7 @@ async function verifyDerivedResolution(
 
 async function verifyEvidenceValidation(
   fixture: AnalysisFixture,
-  reader: BatchGraphReader,
+  reader: GraphBatchReader,
 ): Promise<void> {
   const assessment =
     await classifyExposureWithValidatedEvidence(
@@ -975,8 +876,19 @@ async function verifyEvidenceValidation(
 
 async function verifyTraversalLimits(
   fixture: AnalysisFixture,
-  reader: BatchGraphReader,
+  reader: GraphBatchReader,
 ): Promise<void> {
+  const boundedPage =
+    await reader.findDependents(
+      fixture.affectedVersion.id,
+      {
+        limit: 1,
+      },
+    );
+
+  assert.equal(boundedPage.hops.length, 1);
+  assert.equal(boundedPage.truncated, true);
+
   const roots = [fixture.affectedVersion.id];
 
   const stateLimited = await analyzeBlastRadius(
@@ -1089,7 +1001,7 @@ async function verifyTraversalLimits(
 
 async function verifyMalformedCanonicalHop(
   fixture: AnalysisFixture,
-  reader: BatchGraphReader,
+  reader: GraphBatchReader,
 ): Promise<void> {
   const malformedCanonical = {
     ...fixture.alphaDirectPair.canonical,
@@ -1100,17 +1012,28 @@ async function verifyMalformedCanonicalHop(
     getNode: (nodeId) =>
       reader.getNode(nodeId),
 
-    findDependents: async (nodeId) =>
-      nodeId === fixture.affectedVersion.id
-        ? [
-            {
-              dependentNode:
-                fixture.alphaService,
-              canonicalEdge:
-                malformedCanonical,
-            },
-          ]
-        : [],
+    findDependents: async (
+      nodeId,
+      options,
+    ) => {
+      const hops: DependencyHop[] =
+        nodeId === fixture.affectedVersion.id
+          ? [
+              {
+                dependentNode:
+                  fixture.alphaService,
+                canonicalEdge:
+                  malformedCanonical,
+              },
+            ]
+          : [];
+
+      return {
+        hops: hops.slice(0, options.limit),
+        truncated: hops.length > options.limit,
+      };
+    },
+
 
     getEvidence: (evidenceIds) =>
       reader.getEvidence(evidenceIds),
@@ -1155,7 +1078,7 @@ async function main(): Promise<void> {
     JSON.stringify(fixture.batch);
 
   const reader =
-    new BatchGraphReader(fixture.batch);
+    new GraphBatchReader(fixture.batch);
 
   await verifyDerivedResolution(
     fixture,
@@ -1163,7 +1086,6 @@ async function main(): Promise<void> {
   );
   await verifyProductionPath(
     fixture,
-    reader,
   );
   await verifyEvidenceValidation(
     fixture,
