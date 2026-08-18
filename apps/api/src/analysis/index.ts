@@ -5,6 +5,14 @@ export {
   runWave2Authority,
   Wave2EvidenceValidationError,
 } from "./authority/persisted-wave2.js";
+export {
+  ContainmentEvidenceValidationError,
+  ContainmentSnapshotValidationError,
+  runContainmentSimulation,
+} from "./containment/persisted-containment.js";
+export {
+  ContainmentPlanError,
+} from "./containment/containment-simulator.js";
 
 export type {
   PersistedBlastRadiusResult,
@@ -14,6 +22,25 @@ export type {
   PersistedWave2AuthorityResult,
   Wave2EvidenceValidationCode,
 } from "./authority/persisted-wave2.js";
+
+export type {
+  ContainmentEvidenceValidationCode,
+  ContainmentSnapshotValidationCode,
+  PersistedContainmentAuthorityReader,
+  PersistedContainmentGraphReader,
+  PersistedContainmentSimulationResult,
+} from "./containment/persisted-containment.js";
+
+export type {
+  ContainmentDirective,
+  ContainmentImpact,
+  ContainmentOverlaySummary,
+  ContainmentPlan,
+  ContainmentPlanErrorCode,
+  ContainmentSimulationInput,
+  ContainmentSimulationResult,
+  NormalizedContainmentDirective,
+} from "./containment/containment-simulator.js";
 
 export type {
   AnalysisWarning,
