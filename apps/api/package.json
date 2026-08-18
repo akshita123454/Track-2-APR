@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "validate:analysis": "tsx src/analysis/fixtures/analysis-smoke.ts",
     "test:seed": "npx tsx src/seed-test.ts",
     "validate:fixture": "tsx src/domain/fixture.ts",
     "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts",
