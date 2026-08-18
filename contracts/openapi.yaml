@@ -135,6 +135,32 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /incidents/{incidentId}/blast-radius:
+    get:
+      tags: [Incidents]
+      operationId: getBlastRadius
+      summary: Get blast radius of an incident
+      description: Returns the affected services and traversal path metrics for an incident.
+      parameters:
+        - name: incidentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Blast radius response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HydraGuardBlastRadiusResponse"
+        "404":
+          description: Incident not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   parameters:
     IdempotencyKey:
@@ -146,7 +172,7 @@ components:
       schema:
         type: string
         minLength: 8
-        maxLength: 200
+        maxLength: 80
 
   responses:
     BadRequest:
@@ -431,3 +457,93 @@ components:
           type: array
           items:
             type: string
+    HydraGuardFunnelCounts:
+      type: object
+      additionalProperties: false
+      required:
+        - candidate
+        - semverEligible
+        - resolved
+        - built
+        - deployed
+        - runtimeReachable
+        - executionObserved
+      properties:
+        candidate:
+          type: integer
+          minimum: 0
+        semverEligible:
+          type: integer
+          minimum: 0
+        resolved:
+          type: integer
+          minimum: 0
+        built:
+          type: integer
+          minimum: 0
+        deployed:
+          type: integer
+          minimum: 0
+        runtimeReachable:
+          type: integer
+          minimum: 0
+        executionObserved:
+          type: integer
+          minimum: 0
+
+    HydraGuardBlastRadiusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - incidentId
+        - executionMs
+        - services
+        - totalPathCount
+        - truncated
+        - limits
+        - funnel
+      properties:
+        incidentId:
+          type: integer
+        executionMs:
+          type: integer
+          minimum: 0
+        services:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - serviceId
+              - serviceName
+              - criticality
+              - minimumDepth
+              - pathCount
+            properties:
+              serviceId:
+                type: integer
+              serviceName:
+                type: string
+              criticality:
+                type: string
+              minimumDepth:
+                type: integer
+                minimum: 0
+              pathCount:
+                type: integer
+                minimum: 0
+        totalPathCount:
+          type: integer
+          minimum: 0
+        truncated:
+          type: boolean
+        limits:
+          type: object
+          additionalProperties: true
+        funnel:
+          $ref: "#/components/schemas/HydraGuardFunnelCounts"
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

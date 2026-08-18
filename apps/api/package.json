@@ -17,6 +17,8 @@
     "validate:job-manager": "tsx src/api/jobs/job-manager-smoke.ts",
     "validate:worker-dispatcher": "tsx src/api/jobs/worker-dispatcher-smoke.ts",
     "start": "tsx src/api/index.ts",
+    "validate:live-analysis": "tsx src/analysis/fixtures/live-analysis-smoke.ts",
+
     "validate:server": "tsx src/api/server-smoke.ts"
   },
   "dependencies": {

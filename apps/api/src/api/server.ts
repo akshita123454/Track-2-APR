@@ -7,6 +7,16 @@ import neo4j from "neo4j-driver";
 import type {
   Driver,
 } from "neo4j-driver";
+import {
+  registerAnalysisSchemas,
+} from "./schemas/analysis.js";
+import type {
+    LiveBlastRadiusRunner,
+  } from "./routes/analysis.js";
+
+import {
+  registerAnalysisRoutes,
+} from "./routes/analysis.js";
 
 import {
   HydraPersistenceService,
@@ -63,12 +73,15 @@ import type {
 export interface BuildServerOptions {
   readonly config?: ApiConfig;
   readonly driver?: Driver;
-
+  
+  
   readonly persistenceService?:
     HydraPersistenceService;
 
   readonly incidentCreator?:
     IncidentCreator;
+  readonly analysisRunner?:
+    LiveBlastRadiusRunner;
 
   /**
    * Injected drivers remain caller-owned by default.
@@ -215,6 +228,7 @@ export async function buildServer(
 
 
   registerCommonSchemas(app);
+  registerAnalysisSchemas(app);
   registerErrorHandling(app);
 
   await app.register(
@@ -295,6 +309,21 @@ export async function buildServer(
       incidentCreator,
     },
   );
+  await app.register(
+    registerAnalysisRoutes,
+    {
+      driver,
+
+      ...(options.analysisRunner ===
+      undefined
+        ? {}
+        : {
+            runAnalysis:
+              options.analysisRunner,
+          }),
+    },
+  );
+
 
   app.addHook(
     "onClose",
