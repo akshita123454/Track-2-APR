@@ -13,9 +13,13 @@
     "validate:orchestrator": "tsx src/ingest/npm/orchestrator-smoke.ts",
     "validate:persistence": "tsx src/db/persistence-smoke.ts",
     "demo:preload": "tsx src/demo/preload.ts",
-    "validate:persistence-service": "tsx src/db/persistence-service-smoke.ts"
+    "validate:persistence-service": "tsx src/db/persistence-service-smoke.ts",
+    "validate:job-manager": "tsx src/api/jobs/job-manager-smoke.ts",
+    "validate:worker-dispatcher": "tsx src/api/jobs/worker-dispatcher-smoke.ts"
   },
   "dependencies": {
+    "@fastify/cors": "11.3.0",
+    "fastify": "5.12.0",
     "neo4j-driver": "6.2.0"
   },
   "devDependencies": {
