@@ -488,7 +488,7 @@ export const LOCKFILE_INGESTION_REQUEST_SCHEMA = {
    * Fail before queueing when the declared API format disagrees with the
    * lockfile's actual lockfileVersion.
    */
-  oneOf: [
+    oneOf: [
     {
       properties: {
         format: {
@@ -497,6 +497,12 @@ export const LOCKFILE_INGESTION_REQUEST_SCHEMA = {
         },
 
         lockfile: {
+          type: "object",
+
+          required: [
+            "lockfileVersion",
+          ],
+
           properties: {
             lockfileVersion: {
               const: 2,
@@ -513,6 +519,12 @@ export const LOCKFILE_INGESTION_REQUEST_SCHEMA = {
         },
 
         lockfile: {
+          type: "object",
+
+          required: [
+            "lockfileVersion",
+          ],
+
           properties: {
             lockfileVersion: {
               const: 3,
@@ -522,6 +534,7 @@ export const LOCKFILE_INGESTION_REQUEST_SCHEMA = {
       },
     },
   ],
+
 } as const;
 
 /**
