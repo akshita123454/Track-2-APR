@@ -512,6 +512,86 @@ function createReadersFromOverlay(
     }
   }
 
+  interface BoundedDependentsOptions {
+    readonly limit: number;
+  }
+
+  interface BoundedDependencyHopPage {
+    readonly hops: readonly DependencyHop[];
+    readonly truncated: boolean;
+  }
+
+  interface CompatibleDependentsReader {
+    findDependents(
+      nodeId: NodeId,
+    ): Promise<readonly DependencyHop[]>;
+    findDependents(
+      nodeId: NodeId,
+      options: BoundedDependentsOptions,
+    ): Promise<BoundedDependencyHopPage>;
+  }
+
+  const compatibleBlastRadiusSource =
+    blastRadiusSource as unknown as
+      CompatibleDependentsReader;
+
+  const filterVisibleHops = (
+    hops: readonly DependencyHop[],
+  ): readonly DependencyHop[] =>
+    hops.filter(
+      (hop) =>
+        !blastBlockedNodeIds.has(
+          hop.dependentNode.id,
+        ) &&
+        !blastBlockedNodeIds.has(
+          hop.canonicalEdge.sourceId,
+        ) &&
+        !blastBlockedNodeIds.has(
+          hop.canonicalEdge.targetId,
+        ) &&
+        !blastBlockedEdgeIds.has(
+          hop.canonicalEdge.id,
+        ),
+    );
+
+  async function findVisibleDependents(
+    nodeId: NodeId,
+  ): Promise<readonly DependencyHop[]>;
+  async function findVisibleDependents(
+    nodeId: NodeId,
+    options: BoundedDependentsOptions,
+  ): Promise<BoundedDependencyHopPage>;
+  async function findVisibleDependents(
+    nodeId: NodeId,
+    options?: BoundedDependentsOptions,
+  ): Promise<
+    | readonly DependencyHop[]
+    | BoundedDependencyHopPage
+  > {
+    if (blastBlockedNodeIds.has(nodeId)) {
+      return options === undefined
+        ? []
+        : { hops: [], truncated: false };
+    }
+
+    if (options === undefined) {
+      const hops =
+        await compatibleBlastRadiusSource
+          .findDependents(nodeId);
+
+      return filterVisibleHops(hops);
+    }
+
+    const page =
+      await compatibleBlastRadiusSource
+        .findDependents(nodeId, options);
+
+    return {
+      hops: filterVisibleHops(page.hops),
+      truncated: page.truncated,
+    };
+  }
+
   const blastRadiusReader:
     ReadonlyGraphReader = {
       getNode: async (nodeId) => {
@@ -524,34 +604,7 @@ function createReadersFromOverlay(
         );
       },
 
-      findDependents: async (
-        nodeId,
-      ): Promise<readonly DependencyHop[]> => {
-        if (blastBlockedNodeIds.has(nodeId)) {
-          return [];
-        }
-
-        const hops =
-          await blastRadiusSource.findDependents(
-            nodeId,
-          );
-
-        return hops.filter(
-          (hop) =>
-            !blastBlockedNodeIds.has(
-              hop.dependentNode.id,
-            ) &&
-            !blastBlockedNodeIds.has(
-              hop.canonicalEdge.sourceId,
-            ) &&
-            !blastBlockedNodeIds.has(
-              hop.canonicalEdge.targetId,
-            ) &&
-            !blastBlockedEdgeIds.has(
-              hop.canonicalEdge.id,
-            ),
-        );
-      },
+      findDependents: findVisibleDependents,
 
       getEvidence: (evidenceIds) =>
         blastRadiusSource.getEvidence(

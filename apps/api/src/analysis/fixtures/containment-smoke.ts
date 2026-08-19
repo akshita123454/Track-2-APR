@@ -387,10 +387,27 @@ class BatchContainmentReader
     return this.nodesById.get(nodeId) ?? null;
   }
 
+  public findDependents(
+    nodeId: NodeId,
+  ): Promise<readonly DependencyHop[]>;
+  public findDependents(
+    nodeId: NodeId,
+    options: { readonly limit: number },
+  ): Promise<{
+    readonly hops: readonly DependencyHop[];
+    readonly truncated: boolean;
+  }>;
   public async findDependents(
     nodeId: NodeId,
-  ): Promise<readonly DependencyHop[]> {
-    const reverseIndexes = this.batch.edges
+    options?: { readonly limit: number },
+  ): Promise<
+    | readonly DependencyHop[]
+    | {
+        readonly hops: readonly DependencyHop[];
+        readonly truncated: boolean;
+      }
+  > {
+    const allReverseIndexes = this.batch.edges
       .filter(
         (edge): edge is DerivedEdge =>
           edge.kind === "USED_BY" &&
@@ -398,6 +415,13 @@ class BatchContainmentReader
       )
       .sort((left, right) => left.id - right.id);
 
+    const reverseIndexes =
+      options === undefined
+        ? allReverseIndexes
+        : allReverseIndexes.slice(
+            0,
+            options.limit,
+          );
     const hops: DependencyHop[] = [];
 
     for (const reverseIndex of reverseIndexes) {
@@ -437,7 +461,15 @@ class BatchContainmentReader
       });
     }
 
-    return hops;
+    if (options === undefined) {
+      return hops;
+    }
+
+    return {
+      hops,
+      truncated:
+        allReverseIndexes.length > options.limit,
+    };
   }
 
   public async findOutgoingAuthorityHops(
