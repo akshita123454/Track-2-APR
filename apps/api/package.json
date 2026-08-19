@@ -6,6 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "validate:analysis": "tsx src/analysis/fixtures/analysis-smoke.ts",
+    "validate:wave2": "tsx src/analysis/fixtures/wave2-smoke.ts",
+    "validate:containment": "tsx src/analysis/fixtures/containment-smoke.ts",
     "test:seed": "npx tsx src/seed-test.ts",
     "validate:fixture": "tsx src/domain/fixture.ts",
     "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts",
