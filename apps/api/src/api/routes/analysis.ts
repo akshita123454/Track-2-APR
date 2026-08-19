@@ -16,6 +16,14 @@ import {
 } from "../../analysis/live-analysis.js";
 
 import {
+  HydraReleaseInfluenceStore,
+  ReleaseInfluenceStoreError,
+} from "../../analysis/release-trust/hydra-release-influence-store.js";
+import {
+  runPersistedReleaseFirewall,
+} from "../../analysis/release-trust/persisted-release-firewall.js";
+
+import {
   HydraGraphReaderError,
 } from "../../analysis/readers/hydra-graph-reader.js";
 
@@ -25,6 +33,7 @@ import {
 
 import {
   GET_LIVE_BLAST_RADIUS_ROUTE_SCHEMA,
+  GET_PERSISTED_RELEASE_FIREWALL_ROUTE_SCHEMA,
   registerAnalysisSchemas,
 } from "../schemas/analysis.js";
 
@@ -34,8 +43,14 @@ import type {
 } from "../../analysis/live-analysis.js";
 
 import type {
+  PersistedReleaseFirewallResult,
+  ReleaseInfluenceSnapshotReader,
+} from "../../analysis/release-trust/persisted-release-firewall.js";
+
+import type {
   IncidentAnalysisParams,
   IncidentAnalysisQuerystring,
+  ReleaseFirewallSnapshotParams,
 } from "../schemas/analysis.js";
 
 export type LiveBlastRadiusRunner = (
@@ -43,6 +58,11 @@ export type LiveBlastRadiusRunner = (
   incidentId: number,
   options?: LiveAnalysisOptions,
 ) => Promise<LiveBlastRadiusResult>;
+
+export type PersistedReleaseFirewallRunner = (
+  reader: ReleaseInfluenceSnapshotReader,
+  snapshotId: string,
+) => Promise<PersistedReleaseFirewallResult>;
 
 export interface AnalysisRoutesOptions {
   /**
@@ -62,6 +82,19 @@ export interface AnalysisRoutesOptions {
    * Test boundary. Production defaults to runLiveBlastRadius.
    */
   readonly runAnalysis?: LiveBlastRadiusRunner;
+
+  /**
+   * Optional persisted release reader. Production uses a HydraDB-backed
+   * reader over the same application-owned driver.
+   */
+  readonly releaseInfluenceReader?:
+    ReleaseInfluenceSnapshotReader;
+
+  /**
+   * Test boundary. Production defaults to runPersistedReleaseFirewall.
+   */
+  readonly runReleaseFirewall?:
+    PersistedReleaseFirewallRunner;
 }
 
 function blastRadiusOptions(
@@ -258,6 +291,88 @@ throw new Error(
   }
 }
 
+function assertReleaseFirewallResponse(
+  snapshotId: string,
+  result: PersistedReleaseFirewallResult,
+): void {
+  const { summary, decisions } = result.firewall;
+  const dispositionTotal =
+    summary.allowed +
+    summary.quarantined +
+    summary.blocked;
+  const truncatedCount = decisions.filter(
+    (decision) => decision.truncated,
+  ).length;
+
+  if (
+    result.snapshotId !== snapshotId ||
+    result.engine !== "HydraDB" ||
+    result.consistencyModel !==
+      "verified-release-influence-snapshot" ||
+    summary.evaluated !== decisions.length ||
+    dispositionTotal !== summary.evaluated ||
+    summary.truncated !== truncatedCount
+  ) {
+    throw new Error(
+      "Persisted release firewall returned an invalid response identity",
+    );
+  }
+}
+
+function mapKnownReleaseFirewallError(
+  error: unknown,
+): ApiError | null {
+  if (!(error instanceof ReleaseInfluenceStoreError)) {
+    return null;
+  }
+
+  switch (error.code) {
+    case "SNAPSHOT_INVALID":
+      return new ApiError(
+        "INVALID_RELEASE_FIREWALL_REQUEST",
+        400,
+        "The release-influence snapshot identifier is invalid.",
+      );
+
+    case "SNAPSHOT_NOT_FOUND":
+      return new ApiError(
+        "RELEASE_INFLUENCE_SNAPSHOT_NOT_FOUND",
+        404,
+        "The requested release-influence snapshot was not found.",
+      );
+
+    case "SNAPSHOT_NOT_READY":
+      return new ApiError(
+        "RELEASE_INFLUENCE_SNAPSHOT_NOT_READY",
+        409,
+        "The requested release-influence snapshot is not ready.",
+      );
+
+    case "SNAPSHOT_EXISTS":
+      return new ApiError(
+        "RELEASE_INFLUENCE_SNAPSHOT_CONFLICT",
+        409,
+        "The release-influence snapshot is in a conflicting state.",
+      );
+
+    case "DATABASE_QUERY_FAILED":
+      return new ApiError(
+        "RELEASE_FIREWALL_DATABASE_UNAVAILABLE",
+        503,
+        "HydraDB is temporarily unavailable for release analysis.",
+      );
+
+    case "DATABASE_RESULT_INVALID":
+    case "SNAPSHOT_CORRUPT":
+    case "SNAPSHOT_LIMIT_EXCEEDED":
+      return new ApiError(
+        "RELEASE_FIREWALL_DATA_UNAVAILABLE",
+        503,
+        "Release analysis could not verify the stored influence graph.",
+      );
+  }
+}
+
 function mapKnownAnalysisError(
   error: unknown,
 ): ApiError | null {
@@ -364,6 +479,12 @@ export async function registerAnalysisRoutes(
   const execute =
     options.runAnalysis ??
     runLiveBlastRadius;
+  const releaseInfluenceReader =
+    options.releaseInfluenceReader ??
+    new HydraReleaseInfluenceStore(options.driver);
+  const executeReleaseFirewall =
+    options.runReleaseFirewall ??
+    runPersistedReleaseFirewall;
 
   app.get<{
     Params:
@@ -415,6 +536,54 @@ export async function registerAnalysisRoutes(
               incidentId,
             },
             "Live HydraDB analysis failed",
+          );
+
+          throw publicError;
+        }
+
+        throw error;
+      }
+    },
+  );
+
+  app.get<{
+    Params: ReleaseFirewallSnapshotParams;
+  }>(
+    "/release-influence/snapshots/:snapshotId/firewall",
+    {
+      schema:
+        GET_PERSISTED_RELEASE_FIREWALL_ROUTE_SCHEMA,
+    },
+    async (request, reply) => {
+      const snapshotId =
+        request.params.snapshotId;
+
+      try {
+        const result =
+          await executeReleaseFirewall(
+            releaseInfluenceReader,
+            snapshotId,
+          );
+
+        assertReleaseFirewallResponse(
+          snapshotId,
+          result,
+        );
+
+        return reply
+          .code(200)
+          .send(result);
+      } catch (error: unknown) {
+        const publicError =
+          mapKnownReleaseFirewallError(error);
+
+        if (publicError !== null) {
+          request.log.error(
+            {
+              err: error,
+              snapshotId,
+            },
+            "Persisted release firewall analysis failed",
           );
 
           throw publicError;

@@ -5,6 +5,9 @@ import type {
 import type {
   LiveBlastRadiusResult,
 } from "../../analysis/live-analysis.js";
+import type {
+  PersistedReleaseFirewallResult,
+} from "../../analysis/release-trust/persisted-release-firewall.js";
 
 import {
   ERROR_RESPONSE_REF,
@@ -27,10 +30,16 @@ export const ANALYSIS_ROUTE_LIMITS = {
 export const ANALYSIS_SCHEMA_IDS = {
   liveBlastRadiusResponse:
     "HydraGuardLiveBlastRadiusResponse",
+  persistedReleaseFirewallResponse:
+    "HydraGuardPersistedReleaseFirewallResponse",
 } as const;
 
 export interface IncidentAnalysisParams {
   readonly incidentId: number;
+}
+
+export interface ReleaseFirewallSnapshotParams {
+  readonly snapshotId: string;
 }
 
 export interface IncidentAnalysisQuerystring {
@@ -50,6 +59,9 @@ export interface IncidentAnalysisQuerystring {
 
 export type LiveBlastRadiusResponse =
   LiveBlastRadiusResult;
+
+export type PersistedReleaseFirewallResponse =
+  PersistedReleaseFirewallResult;
 
 const NODE_ID_SCHEMA = {
   type: "integer",
@@ -1135,6 +1147,351 @@ export const INCIDENT_ANALYSIS_QUERY_SCHEMA = {
   },
 } as const;
 
+export const RELEASE_FIREWALL_RESPONSE_LIMITS = {
+  maxDecisions: 10_000,
+  maxFindingsPerDecision: 250,
+  maxRiskPathsPerDecision: 100,
+  maxPathDepth: 16,
+} as const;
+
+const RELEASE_SUBJECT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "ecosystem",
+    "packageName",
+    "version",
+  ],
+  properties: {
+    ecosystem: {
+      type: "string",
+      minLength: 1,
+    },
+    packageName: {
+      type: "string",
+      minLength: 1,
+    },
+    version: {
+      type: "string",
+      minLength: 1,
+    },
+    artifactDigest: {
+      type: "string",
+      minLength: 1,
+    },
+  },
+} as const;
+
+const RELEASE_TRUST_FINDING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "code",
+    "severity",
+    "message",
+  ],
+  properties: {
+    code: {
+      type: "string",
+      enum: [
+        "untrusted-node",
+        "untrusted-edge",
+        "unknown-node",
+        "unknown-edge",
+        "cross-boundary-cache",
+        "unknown-cache-boundary",
+        "missing-node-evidence",
+        "missing-edge-evidence",
+        "missing-artifact-publication",
+        "cycle-skipped",
+        "depth-limit-reached",
+        "traversal-state-limit-reached",
+        "incoming-edge-limit-reached",
+        "risk-path-limit-reached",
+        "finding-limit-reached",
+      ],
+    },
+    severity: {
+      type: "string",
+      enum: [
+        "block",
+        "quarantine",
+        "warning",
+      ],
+    },
+    message: {
+      type: "string",
+      minLength: 1,
+    },
+    nodeId: NODE_ID_SCHEMA,
+    edgeId: NODE_ID_SCHEMA,
+    pathKey: {
+      type: "string",
+      minLength: 1,
+    },
+  },
+} as const;
+
+const RELEASE_INFLUENCE_PATH_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "pathKey",
+    "nodeIds",
+    "edgeIds",
+    "depth",
+  ],
+  properties: {
+    pathKey: {
+      type: "string",
+      minLength: 1,
+    },
+    nodeIds: {
+      type: "array",
+      minItems: 1,
+      maxItems:
+        RELEASE_FIREWALL_RESPONSE_LIMITS.maxPathDepth + 1,
+      items: NODE_ID_SCHEMA,
+    },
+    edgeIds: {
+      type: "array",
+      maxItems:
+        RELEASE_FIREWALL_RESPONSE_LIMITS.maxPathDepth,
+      items: NODE_ID_SCHEMA,
+    },
+    depth: {
+      type: "integer",
+      minimum: 0,
+      maximum:
+        RELEASE_FIREWALL_RESPONSE_LIMITS.maxPathDepth,
+    },
+  },
+} as const;
+
+const RELEASE_TRUST_DECISION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "releaseNodeId",
+    "subject",
+    "verdict",
+    "reason",
+    "findings",
+    "riskPaths",
+    "truncated",
+    "inspectedNodeCount",
+    "inspectedEdgeCount",
+  ],
+  properties: {
+    releaseNodeId: NODE_ID_SCHEMA,
+    subject: RELEASE_SUBJECT_SCHEMA,
+    verdict: {
+      type: "string",
+      enum: [
+        "allow",
+        "quarantine",
+        "block",
+      ],
+    },
+    reason: {
+      type: "string",
+      minLength: 1,
+    },
+    findings: {
+      type: "array",
+      maxItems:
+        RELEASE_FIREWALL_RESPONSE_LIMITS.maxFindingsPerDecision,
+      items: RELEASE_TRUST_FINDING_SCHEMA,
+    },
+    riskPaths: {
+      type: "array",
+      maxItems:
+        RELEASE_FIREWALL_RESPONSE_LIMITS.maxRiskPathsPerDecision,
+      items: RELEASE_INFLUENCE_PATH_SCHEMA,
+    },
+    truncated: {
+      type: "boolean",
+    },
+    inspectedNodeCount:
+      NONNEGATIVE_COUNT_SCHEMA,
+    inspectedEdgeCount:
+      NONNEGATIVE_COUNT_SCHEMA,
+  },
+} as const;
+
+const RELEASE_FIREWALL_OPTIONS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "maxDepth",
+    "maxTraversalStatesPerRelease",
+    "maxIncomingEdgesPerNode",
+    "maxRiskPathsPerRelease",
+    "maxFindingsPerRelease",
+    "requireEvidence",
+    "untrustedDisposition",
+    "unknownDisposition",
+    "crossBoundaryCacheDisposition",
+    "unknownCacheBoundaryDisposition",
+  ],
+  properties: {
+    maxDepth: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_SAFE_INTEGER,
+    },
+    maxTraversalStatesPerRelease: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_SAFE_INTEGER,
+    },
+    maxIncomingEdgesPerNode: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_SAFE_INTEGER,
+    },
+    maxRiskPathsPerRelease: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_SAFE_INTEGER,
+    },
+    maxFindingsPerRelease: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_SAFE_INTEGER,
+    },
+    requireEvidence: {
+      type: "boolean",
+    },
+    untrustedDisposition: {
+      type: "string",
+      enum: ["block", "quarantine"],
+    },
+    unknownDisposition: {
+      type: "string",
+      enum: ["block", "quarantine"],
+    },
+    crossBoundaryCacheDisposition: {
+      type: "string",
+      enum: ["block", "quarantine"],
+    },
+    unknownCacheBoundaryDisposition: {
+      type: "string",
+      enum: ["block", "quarantine"],
+    },
+  },
+} as const;
+
+export const PERSISTED_RELEASE_FIREWALL_RESPONSE_SCHEMA = {
+  $id:
+    ANALYSIS_SCHEMA_IDS.persistedReleaseFirewallResponse,
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "snapshotId",
+    "persistedAt",
+    "firewall",
+    "consistencyModel",
+    "engine",
+  ],
+  properties: {
+    snapshotId: {
+      type: "string",
+      pattern:
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+    },
+    persistedAt: TIMESTAMP_SCHEMA,
+    firewall: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "decisions",
+        "summary",
+        "options",
+      ],
+      properties: {
+        decisions: {
+          type: "array",
+          maxItems:
+            RELEASE_FIREWALL_RESPONSE_LIMITS.maxDecisions,
+          items: RELEASE_TRUST_DECISION_SCHEMA,
+        },
+        summary: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "evaluated",
+            "allowed",
+            "quarantined",
+            "blocked",
+            "truncated",
+          ],
+          properties: {
+            evaluated:
+              NONNEGATIVE_COUNT_SCHEMA,
+            allowed:
+              NONNEGATIVE_COUNT_SCHEMA,
+            quarantined:
+              NONNEGATIVE_COUNT_SCHEMA,
+            blocked:
+              NONNEGATIVE_COUNT_SCHEMA,
+            truncated:
+              NONNEGATIVE_COUNT_SCHEMA,
+          },
+        },
+        options:
+          RELEASE_FIREWALL_OPTIONS_SCHEMA,
+      },
+    },
+    consistencyModel: {
+      type: "string",
+      const:
+        "verified-release-influence-snapshot",
+    },
+    engine: {
+      type: "string",
+      const: "HydraDB",
+    },
+  },
+} as const;
+
+export const PERSISTED_RELEASE_FIREWALL_RESPONSE_REF = {
+  $ref:
+    `${ANALYSIS_SCHEMA_IDS.persistedReleaseFirewallResponse}#`,
+} as const;
+
+export const RELEASE_FIREWALL_SNAPSHOT_PARAMS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["snapshotId"],
+  properties: {
+    snapshotId: {
+      type: "string",
+      pattern:
+        "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+    },
+  },
+} as const;
+
+export const GET_PERSISTED_RELEASE_FIREWALL_ROUTE_SCHEMA = {
+  params:
+    RELEASE_FIREWALL_SNAPSHOT_PARAMS_SCHEMA,
+  response: {
+    200:
+      PERSISTED_RELEASE_FIREWALL_RESPONSE_REF,
+    400:
+      ERROR_RESPONSE_REF,
+    404:
+      ERROR_RESPONSE_REF,
+    409:
+      ERROR_RESPONSE_REF,
+    503:
+      ERROR_RESPONSE_REF,
+    500:
+      ERROR_RESPONSE_REF,
+  },
+} as const;
+
 export const GET_LIVE_BLAST_RADIUS_ROUTE_SCHEMA = {
   params:
     INCIDENT_ANALYSIS_PARAMS_SCHEMA,
@@ -1170,6 +1527,16 @@ export function registerAnalysisSchemas(
   ) {
     app.addSchema(
       LIVE_BLAST_RADIUS_RESPONSE_SCHEMA,
+    );
+  }
+
+  if (
+    app.getSchema(
+      PERSISTED_RELEASE_FIREWALL_RESPONSE_SCHEMA.$id,
+    ) === undefined
+  ) {
+    app.addSchema(
+      PERSISTED_RELEASE_FIREWALL_RESPONSE_SCHEMA,
     );
   }
 }

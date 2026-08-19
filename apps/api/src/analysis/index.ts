@@ -69,3 +69,55 @@ export type {
   Wave2AuthorityWarning,
   Wave2AuthorityWarningCode,
 } from "./authority/wave2-propagation.js";
+
+export {
+  evaluateReleaseFirewall,
+} from "./release-trust/release-influence-firewall.js";
+export {
+  ReleaseFirewallInputError,
+} from "./release-trust/release-influence-types.js";
+
+export {
+  HydraReleaseInfluenceStore,
+  ReleaseInfluenceStoreError,
+} from "./release-trust/hydra-release-influence-store.js";
+export {
+  runPersistedReleaseFirewall,
+} from "./release-trust/persisted-release-firewall.js";
+
+export type {
+  HydraReleaseInfluenceStoreOptions,
+  PersistedReleaseInfluenceSnapshot,
+  PersistReleaseInfluenceResult,
+  ReleaseInfluenceStoreErrorCode,
+} from "./release-trust/hydra-release-influence-store.js";
+export type {
+  PersistedReleaseFirewallResult,
+  ReleaseInfluenceSnapshotReader,
+} from "./release-trust/persisted-release-firewall.js";
+
+export type {
+  AppliedReleaseFirewallOptions,
+  ReleaseFirewallInput,
+  ReleaseFirewallInputErrorCode,
+  ReleaseFirewallOptions,
+  ReleaseFirewallResult,
+  ReleaseFirewallSummary,
+  ReleaseInfluenceEdge,
+  ReleaseInfluenceEdgeKind,
+  ReleaseInfluenceGraph,
+  ReleaseInfluenceNode,
+  ReleaseInfluenceNodeKind,
+  ReleaseInfluencePath,
+  ReleaseNode,
+  ReleasePipelineNode,
+  ReleaseRiskDisposition,
+  ReleaseSubject,
+  ReleaseTrustBoundary,
+  ReleaseTrustDecision,
+  ReleaseTrustFinding,
+  ReleaseTrustFindingCode,
+  ReleaseTrustFindingSeverity,
+  ReleaseTrustLevel,
+  ReleaseTrustVerdict,
+} from "./release-trust/release-influence-types.js";
