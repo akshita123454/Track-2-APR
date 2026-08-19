@@ -14,6 +14,15 @@ import type {
   NodeKind,
 } from "../../domain/schema.js";
 
+import type {
+  HydraEdgeRow,
+  HydraNodeRow,
+} from "../../db/hydra-serializer.js";
+
+import {
+  toHydraParameters,
+} from "../../db/hydra-parameters.js";
+
 import {
   deserializeHydraEdge,
   deserializeHydraNode,
@@ -1180,7 +1189,7 @@ export class HydraGraphReader
     try {
       result = await session.run(
         query,
-        { ...parameters },
+        toHydraParameters(parameters),
         {
           timeout:
             this.statementTimeoutMs,

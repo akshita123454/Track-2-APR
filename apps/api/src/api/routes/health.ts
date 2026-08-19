@@ -17,7 +17,7 @@ import type {
 export interface HealthRoutesOptions {
   readonly database: Pick<
     Driver,
-    "verifyConnectivity"
+    "session"
   >;
 
   readonly jobManager: JobManager;
@@ -234,48 +234,26 @@ function readTimestamp(
 }
 
 async function checkDatabase(
-  database: Pick<
-    Driver,
-    "verifyConnectivity"
-  >,
+  database: Pick<Driver, "session">,
   timeoutMs: number,
 ): Promise<boolean> {
-  let timeout:
-    NodeJS.Timeout | undefined;
+  const session =
+    database.session();
 
   try {
-    await Promise.race([
-      database
-        .verifyConnectivity()
-        .then(() => undefined),
-
-      new Promise<never>(
-        (_resolve, reject) => {
-          timeout = setTimeout(
-            () => {
-              reject(
-                new Error(
-                  "HydraDB readiness check timed out",
-                ),
-              );
-            },
-            timeoutMs,
-          );
-        },
-      ),
-    ]);
+    await session.run(
+      "MATCH (n) RETURN n.id AS id LIMIT 1",
+      {},
+      {
+        timeout: timeoutMs,
+      },
+    );
 
     return true;
   } catch {
-    /*
-     * Never expose driver errors, addresses, credentials or connection
-     * metadata through a public health endpoint.
-     */
     return false;
   } finally {
-    if (timeout !== undefined) {
-      clearTimeout(timeout);
-    }
+    await session.close();
   }
 }
 

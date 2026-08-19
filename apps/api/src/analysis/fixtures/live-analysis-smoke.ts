@@ -132,19 +132,30 @@ function requireRecord(
 
 function requireSafeInteger(
   value: unknown,
-  field: string,
+  description: string,
 ): number {
+  let converted = value;
+
   if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 0
+    typeof value === "object" &&
+    value !== null &&
+    "toNumber" in value &&
+    typeof (value as any).toNumber === "function"
+  ) {
+    converted = (value as any).toNumber();
+  }
+
+  if (
+    typeof converted !== "number" ||
+    !Number.isSafeInteger(converted) ||
+    converted < 0
   ) {
     throw new TypeError(
-      `${field} must be a nonnegative safe integer`,
+      `${description} must be a nonnegative safe integer`,
     );
   }
 
-  return value;
+  return converted as number;
 }
 
 function limitFromQuery(

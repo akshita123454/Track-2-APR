@@ -124,17 +124,28 @@ function requireNumber(
   value: unknown,
   description: string,
 ): number {
+  let converted = value;
+
   if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 0
+    typeof value === "object" &&
+    value !== null &&
+    "toNumber" in value &&
+    typeof value.toNumber === "function"
+  ) {
+    converted = value.toNumber();
+  }
+
+  if (
+    typeof converted !== "number" ||
+    !Number.isSafeInteger(converted) ||
+    converted < 0
   ) {
     throw new TypeError(
       `${description} must be a nonnegative safe integer`,
     );
   }
 
-  return value;
+  return converted;
 }
 
 function requireRows(
@@ -436,7 +447,7 @@ class FakeHydraStore {
   ): FakeResult {
     const relationshipType = requireMatch(
       query,
-      /\[r:([A-Za-z_][A-Za-z0-9_]*)\]->/,
+      /\[:([A-Za-z_][A-Za-z0-9_]*) \{/,
       "verification relationship type",
     );
 
@@ -450,6 +461,21 @@ class FakeHydraStore {
       "verification destination vertex",
     );
 
+    const relationshipVertex = requireNumber(
+      parameters.relationship_vertex,
+      "verification relationship vertex",
+    );
+
+    const logicalId = requireString(
+      parameters.logical_id,
+      "verification relationship logical identity",
+    );
+
+    const kind = requireString(
+      parameters.kind,
+      "verification relationship kind",
+    );
+
     const records = [
       ...this.relationships.values(),
     ]
@@ -460,16 +486,20 @@ class FakeHydraStore {
           relationship.source_vertex ===
             sourceVertex &&
           relationship.destination_vertex ===
-            destinationVertex,
+            destinationVertex &&
+          relationship.relationship_vertex ===
+            relationshipVertex &&
+          relationship.logical_id ===
+            logicalId &&
+          relationship.kind === kind,
       )
       .map(
         (relationship) =>
           new FakeRecord({
-            relationship_vertex:
-              relationship.relationship_vertex,
-            logical_id:
-              relationship.logical_id,
-            kind: relationship.kind,
+            source_vertex:
+              relationship.source_vertex,
+            destination_vertex:
+              relationship.destination_vertex,
           }),
       );
 

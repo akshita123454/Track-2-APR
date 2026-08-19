@@ -8,3 +8,5 @@ dist/
 build/
 *.tsbuildinfo
 hydradb-data/
+hydradb-e2e-data/
+hydradb-phase10-data/

@@ -316,7 +316,7 @@ export function loadApiConfig(
         readUrl(
           env,
           "HYDRADB_URI",
-          "bolt://localhost:7687",
+          "bolt://127.0.0.1:27687",
           [
             "bolt:",
             "neo4j:",

@@ -18,8 +18,9 @@
     "validate:worker-dispatcher": "tsx src/api/jobs/worker-dispatcher-smoke.ts",
     "start": "tsx src/api/index.ts",
     "validate:live-analysis": "tsx src/analysis/fixtures/live-analysis-smoke.ts",
-
-    "validate:server": "tsx src/api/server-smoke.ts"
+    "validate:server": "tsx src/api/server-smoke.ts",
+    "validate:e2e": "tsx src/demo/e2e-smoke.ts",
+    "validate:all": "npm run typecheck && npm run validate:fixture && npm run validate:lockfile && npm run validate:graph-batch && npm run validate:orchestrator && npm run validate:persistence && npm run validate:persistence-service && npm run validate:job-manager && npm run validate:worker-dispatcher && npm run validate:analysis && npm run validate:live-analysis && npm run validate:server"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",

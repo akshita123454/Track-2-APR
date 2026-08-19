@@ -102,30 +102,13 @@ export interface HydraGuardServer {
 async function createDriver(
   config: ApiConfig,
 ): Promise<Driver> {
-  const driver =
-    neo4j.driver(
-      config.hydra.uri,
-      neo4j.auth.basic(
-        config.hydra.user,
-        config.hydra.token,
-      ),
-    );
-
-  try {
-    await driver
-      .verifyConnectivity();
-
-    return driver;
-  } catch (error: unknown) {
-    await driver.close();
-
-    throw new Error(
-      "Could not connect to HydraDB. Confirm that the configured Bolt endpoint is available.",
-      {
-        cause: error,
-      },
-    );
-  }
+  return neo4j.driver(
+    config.hydra.uri,
+    neo4j.auth.basic(
+      config.hydra.user,
+      config.hydra.token,
+    ),
+  );
 }
 
 export async function buildServer(

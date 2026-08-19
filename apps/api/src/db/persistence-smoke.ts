@@ -112,17 +112,28 @@ function requireNumber(
   value: unknown,
   description: string,
 ): number {
-  if (typeof value !== "number") {
-    throw new TypeError(`${description} must be a number`);
+  let converted = value;
+
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "toNumber" in value &&
+    typeof value.toNumber === "function"
+  ) {
+    converted = value.toNumber();
   }
 
-  if (!Number.isSafeInteger(value) || value < 0) {
+  if (
+    typeof converted !== "number" ||
+    !Number.isSafeInteger(converted) ||
+    converted < 0
+  ) {
     throw new TypeError(
       `${description} must be a nonnegative safe integer`,
     );
   }
 
-  return value;
+  return converted;
 }
 
 function requireRows(parameters: Readonly<UnknownRecord>): UnknownRecord[] {
@@ -270,16 +281,25 @@ class FakeHydraStore {
     }
 
     if (
-      query.includes("]->(d)") &&
-      query.includes("destination_vertex") &&
-      !query.includes("$destination_vertex")
+      query.startsWith("MATCH (s:") &&
+      query.includes(
+        "RETURN s.id AS source_vertex",
+      ) &&
+      !query.includes(
+        "$destination_vertex",
+      )
     ) {
-      return this.findOutgoingRelationships(parameters);
+      return this.findIdentityRelationships(
+        query,
+        parameters,
+      );
     }
 
     if (
       query.startsWith("MATCH (s:") &&
-      query.includes("$destination_vertex")
+      query.includes(
+        "$destination_vertex",
+      )
     ) {
       return this.verifyRelationship(query, parameters);
     }
@@ -400,30 +420,97 @@ class FakeHydraStore {
     };
   }
 
-  private findOutgoingRelationships(
+  private findIdentityRelationships(
+    query: string,
     parameters: Readonly<UnknownRecord>,
   ): FakeResult {
-    const sourceVertex = requireNumber(
-      parameters.source_vertex,
-      "relationship source lookup",
+    const relationshipType = requireMatch(
+      query,
+      /\[:([A-Za-z_][A-Za-z0-9_]*) \{/,
+      "identity-probe relationship type",
     );
+
+    const relationshipVertex =
+      parameters.relationship_vertex === undefined
+        ? undefined
+        : requireNumber(
+            parameters.relationship_vertex,
+            "relationship identity vertex",
+          );
+
+    const logicalId =
+      parameters.logical_id === undefined
+        ? undefined
+        : requireString(
+            parameters.logical_id,
+            "relationship logical identity",
+          );
+
+    const kind =
+      parameters.kind === undefined
+        ? undefined
+        : requireString(
+            parameters.kind,
+            "relationship kind",
+          );
+
+    const sourceId =
+      parameters.source_id === undefined
+        ? undefined
+        : requireNumber(
+            parameters.source_id,
+            "relationship source identity",
+          );
+
+    const targetId =
+      parameters.target_id === undefined
+        ? undefined
+        : requireNumber(
+            parameters.target_id,
+            "relationship target identity",
+          );
+
+    const derived =
+      parameters.derived;
+
+    if (
+      derived !== undefined &&
+      typeof derived !== "boolean"
+    ) {
+      throw new TypeError(
+        "relationship derived identity must be a boolean",
+      );
+    }
 
     return {
       records: [...this.relationships.values()]
         .filter(
           (relationship) =>
-            relationship.source_vertex === sourceVertex,
+            relationship.relationship_type ===
+              relationshipType &&
+            (relationshipVertex === undefined ||
+              relationship.relationship_vertex ===
+                relationshipVertex) &&
+            (logicalId === undefined ||
+              relationship.logical_id === logicalId) &&
+            (kind === undefined ||
+              relationship.kind === kind) &&
+            (sourceId === undefined ||
+              relationship.source_id === sourceId) &&
+            (targetId === undefined ||
+              relationship.target_id === targetId) &&
+            (derived === undefined ||
+              relationship.derived === derived),
         )
-        .map((relationship) => new FakeRecord({
-          relationship_vertex:
-            relationship.relationship_vertex,
-          logical_id: relationship.logical_id,
-          kind: relationship.kind,
-          source_id: relationship.source_id,
-          target_id: relationship.target_id,
-          destination_vertex:
-            relationship.destination_vertex,
-        })),
+        .map(
+          (relationship) =>
+            new FakeRecord({
+              source_vertex:
+                relationship.source_vertex,
+              destination_vertex:
+                relationship.destination_vertex,
+            }),
+        ),
     };
   }
 
@@ -433,7 +520,7 @@ class FakeHydraStore {
   ): FakeResult {
     const relationshipType = requireMatch(
       query,
-      /\[r:([A-Za-z_][A-Za-z0-9_]*)\]->/,
+      /\[:([A-Za-z_][A-Za-z0-9_]*) \{/,
       "verification relationship type",
     );
 
@@ -445,6 +532,18 @@ class FakeHydraStore {
       parameters.destination_vertex,
       "verification destination vertex",
     );
+    const relationshipVertex = requireNumber(
+      parameters.relationship_vertex,
+      "verification relationship vertex",
+    );
+    const logicalId = requireString(
+      parameters.logical_id,
+      "verification relationship logical identity",
+    );
+    const kind = requireString(
+      parameters.kind,
+      "verification relationship kind",
+    );
 
     return {
       records: [...this.relationships.values()]
@@ -452,14 +551,20 @@ class FakeHydraStore {
           (relationship) =>
             relationship.source_vertex === sourceVertex &&
             relationship.destination_vertex === destinationVertex &&
-            relationship.relationship_type === relationshipType,
+            relationship.relationship_type === relationshipType &&
+            relationship.relationship_vertex === relationshipVertex &&
+            relationship.logical_id === logicalId &&
+            relationship.kind === kind,
         )
-        .map((relationship) => new FakeRecord({
-          relationship_vertex:
-            relationship.relationship_vertex,
-          logical_id: relationship.logical_id,
-          kind: relationship.kind,
-        })),
+        .map(
+          (relationship) =>
+            new FakeRecord({
+              source_vertex:
+                relationship.source_vertex,
+              destination_vertex:
+                relationship.destination_vertex,
+            }),
+        ),
     };
   }
 }

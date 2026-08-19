@@ -28,21 +28,17 @@ import {
 } from "./server.js";
 
 const fakeDriver = {
-  verifyConnectivity:
-    async () => ({
-      address: "smoke",
-      agent: "smoke",
-      protocolVersion: 1,
-    }),
-
   close:
     async () => undefined,
 
-  session: () => {
-    throw new Error(
-      "Smoke driver session must not be used",
-    );
-  },
+  session: () => ({
+    run: async () => ({
+      records: [],
+    }),
+
+    close: async () =>
+      undefined,
+  }),
 } as unknown as Driver;
 
 const fakePersistence = {

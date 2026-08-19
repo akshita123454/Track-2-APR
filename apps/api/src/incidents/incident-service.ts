@@ -43,6 +43,10 @@ import type {
   StandardCanonicalEdge,
 } from "../domain/schema.js";
 
+import {
+  toHydraParameters,
+} from "../db/hydra-parameters.js";
+
 import type {
   HydraEdgeRow,
 } from "../db/hydra-serializer.js";
@@ -556,9 +560,7 @@ export class HydraIncidentService
             "RETURN e.logical_id AS logical_id,",
             "       e.detail AS detail",
           ].join("\n"),
-          {
-            id: evidenceId,
-          },
+          toHydraParameters({ id: evidenceId }),
           {
             timeout:
               this.statementTimeoutMs,
@@ -663,10 +665,10 @@ export class HydraIncidentService
               "       v.logical_id AS logical_id,",
               "       v.version AS version",
             ].join("\n"),
-            {
+            toHydraParameters({
               package_name:
                 release.packageName,
-            },
+            }),
             {
               timeout:
                 this.statementTimeoutMs,
@@ -915,14 +917,14 @@ export class HydraIncidentService
       try {
         await session.run(
           query,
-          {
+          toHydraParameters({
             rows:
               rowChunks[index].map(
                 (row) => ({
                   ...row,
                 }),
               ),
-          },
+          }),
           {
             timeout:
               this.statementTimeoutMs,
@@ -964,66 +966,42 @@ export class HydraIncidentService
           await session.run(
             [
               "MATCH (i:Incident {id: $source_vertex})",
-              "      -[r:AFFECTS]->",
-              "      (v:PackageVersion {id: $destination_vertex})",
-              "RETURN r.id AS relationship_vertex,",
-              "       r.logical_id AS logical_id,",
-              "       r.kind AS kind",
+              "-[:AFFECTS {",
+              "  id: $relationship_vertex,",
+              "  logical_id: $logical_id,",
+              "  kind: $kind",
+              "}]->",
+              "(v:PackageVersion {id: $destination_vertex})",
+              "RETURN i.id AS source_vertex,",
+              "       v.id AS destination_vertex",
             ].join("\n"),
-            {
+            toHydraParameters({
               source_vertex:
                 row.source_vertex,
 
               destination_vertex:
                 row.destination_vertex,
-            },
+
+              relationship_vertex:
+                row.relationship_vertex,
+
+              logical_id:
+                row.logical_id,
+
+              kind:
+                row.kind,
+            }),
             {
               timeout:
                 this.statementTimeoutMs,
             },
           );
 
-        const matches =
-          result.records.filter(
-            (record) =>
-              asSafeInteger(
-                record.get(
-                  "relationship_vertex",
-                ),
-                "AFFECTS relationship ID",
-              ) ===
-              row.relationship_vertex,
-          );
-
-        if (
-          matches.length !== 1
-        ) {
+        if (result.records.length !== 1) {
           throw new IncidentServiceError(
             "INCIDENT_VERIFICATION_FAILED",
             503,
             "An incident AFFECTS relationship could not be uniquely verified",
-          );
-        }
-
-        const record =
-          matches[0];
-
-        if (
-          asString(
-            record.get(
-              "logical_id",
-            ),
-            "AFFECTS logical identity",
-          ) !== row.logical_id ||
-          asString(
-            record.get("kind"),
-            "AFFECTS kind",
-          ) !== "AFFECTS"
-        ) {
-          throw new IncidentServiceError(
-            "INCIDENT_VERIFICATION_FAILED",
-            503,
-            "An incident AFFECTS relationship has an unexpected identity",
           );
         }
       }

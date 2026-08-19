@@ -8,6 +8,10 @@ import type {
   Session,
 } from "neo4j-driver";
 
+import {
+  toHydraParameters,
+} from "./hydra-parameters.js";
+
 import { validateGraph } from "../domain/validator.js";
 
 import type { GraphBatch } from "../ingest/graph-batch.js";
@@ -390,8 +394,6 @@ function buildNodeUpsertQuery(
   if (guarded) {
     assignments.push(
       "n.__hydradb_update_if_newer_by = row.observed_at",
-      "n.__hydradb_create_only_logical_id = row.logical_id",
-      "n.__hydradb_create_only_kind = row.kind",
     );
   }
 
@@ -424,11 +426,6 @@ function buildEdgeUpsertQuery(
   if (guarded) {
     assignments.push(
       "r.__hydradb_update_if_newer_by = row.observed_at",
-      "r.__hydradb_create_only_logical_id = row.logical_id",
-      "r.__hydradb_create_only_kind = row.kind",
-      "r.__hydradb_create_only_source_id = row.source_id",
-      "r.__hydradb_create_only_target_id = row.target_id",
-      "r.__hydradb_create_only_derived = row.derived",
     );
   }
 
@@ -442,22 +439,69 @@ function buildEdgeUpsertQuery(
   ].join("\n");
 }
 
-function buildEdgePreflightQuery(
+function buildEdgeIdentityProbeQuery(
+  group: HydraEdgeGroup,
+  property: "id" | "logical_id",
+): string {
+  assertIdentifier(
+    group.sourceLabel,
+    "source label",
+  );
+
+  assertIdentifier(
+    group.destinationLabel,
+    "destination label",
+  );
+
+  assertIdentifier(
+    group.relationshipType,
+    "relationship type",
+  );
+
+  const parameter =
+    property === "id"
+      ? "relationship_vertex"
+      : "logical_id";
+
+  return [
+    `MATCH (s:${group.sourceLabel})`,
+    `-[:${group.relationshipType} {${property}: $${parameter}}]->`,
+    `(d:${group.destinationLabel})`,
+    "RETURN s.id AS source_vertex,",
+    "       d.id AS destination_vertex",
+  ].join("\n");
+}
+
+function buildEdgeExactIdentityQuery(
   group: HydraEdgeGroup,
 ): string {
-  assertIdentifier(group.sourceLabel, "source label");
+  assertIdentifier(
+    group.sourceLabel,
+    "source label",
+  );
 
-  /*
-   * This uses the outbound variable-relationship traversal already
-   * demonstrated by the HydraDB compatibility smoke.
-   */
+  assertIdentifier(
+    group.destinationLabel,
+    "destination label",
+  );
+
+  assertIdentifier(
+    group.relationshipType,
+    "relationship type",
+  );
+
   return [
-    `MATCH (s:${group.sourceLabel} {id: $source_vertex})-[r]->(d)`,
-    "RETURN r.id AS relationship_vertex,",
-    "       r.logical_id AS logical_id,",
-    "       r.kind AS kind,",
-    "       r.source_id AS source_id,",
-    "       r.target_id AS target_id,",
+    `MATCH (s:${group.sourceLabel})`,
+    `-[:${group.relationshipType} {`,
+    "  id: $relationship_vertex,",
+    "  logical_id: $logical_id,",
+    "  kind: $kind,",
+    "  source_id: $source_id,",
+    "  target_id: $target_id,",
+    "  derived: $derived",
+    "}]->",
+    `(d:${group.destinationLabel})`,
+    "RETURN s.id AS source_vertex,",
     "       d.id AS destination_vertex",
   ].join("\n");
 }
@@ -465,24 +509,31 @@ function buildEdgePreflightQuery(
 function buildEdgeVerificationQuery(
   group: HydraEdgeGroup,
 ): string {
-  assertIdentifier(group.sourceLabel, "source label");
+  assertIdentifier(
+    group.sourceLabel,
+    "source label",
+  );
+
   assertIdentifier(
     group.destinationLabel,
     "destination label",
   );
+
   assertIdentifier(
     group.relationshipType,
     "relationship type",
   );
 
   return [
-    `MATCH (s:${group.sourceLabel} {id: $source_vertex})` +
-      `-[r:${group.relationshipType}]->` +
-      `(d:${group.destinationLabel} ` +
-      "{id: $destination_vertex})",
-    "RETURN r.id AS relationship_vertex,",
-    "       r.logical_id AS logical_id,",
-    "       r.kind AS kind",
+    `MATCH (s:${group.sourceLabel} {id: $source_vertex})`,
+    `-[:${group.relationshipType} {`,
+    "  id: $relationship_vertex,",
+    "  logical_id: $logical_id,",
+    "  kind: $kind",
+    "}]->",
+    `(d:${group.destinationLabel} {id: $destination_vertex})`,
+    "RETURN s.id AS source_vertex,",
+    "       d.id AS destination_vertex",
   ].join("\n");
 }
 
@@ -717,7 +768,7 @@ export async function persistGraphBatch(
 
         const result = await session.run(
           query,
-          parameters,
+          toHydraParameters(parameters),
           {
             timeout: statementTimeoutMs,
             metadata,
@@ -977,7 +1028,22 @@ export async function persistGraphBatch(
     }
 
     for (const group of allEdgeGroups) {
-      const query = buildEdgePreflightQuery(group);
+      const byIdQuery =
+        buildEdgeIdentityProbeQuery(
+          group,
+          "id",
+        );
+
+      const byLogicalIdQuery =
+        buildEdgeIdentityProbeQuery(
+          group,
+          "logical_id",
+        );
+
+      const exactIdentityQuery =
+        buildEdgeExactIdentityQuery(
+          group,
+        );
 
       for (
         let index = 0;
@@ -986,75 +1052,147 @@ export async function persistGraphBatch(
       ) {
         const row = group.rows[index];
 
-        const result = await executeStatement(
+        const byId = await executeStatement(
           preflightPhase,
-          query,
+          byIdQuery,
           {
-            source_vertex: row.source_vertex,
+            relationship_vertex:
+              row.relationship_vertex,
           },
           {
             phase: "preflight-identities",
             queryShapeId:
-              `preflight.${group.shapeId}`,
+              `preflight.${group.shapeId}.by-id`,
             step:
-              `preflight.edge.${shortHash(group.shapeId)}.${index}`,
+              `preflight.edge.${shortHash(group.shapeId)}.${index}.id`,
             mutation: false,
             chunkIndex: index,
           },
         );
 
-        for (const record of result.records) {
-          const existingId = asSafeInteger(
-            record.get("relationship_vertex"),
-            "relationship ID",
+        const byLogicalId =
+          await executeStatement(
+            preflightPhase,
+            byLogicalIdQuery,
+            {
+              logical_id:
+                row.logical_id,
+            },
+            {
+              phase: "preflight-identities",
+              queryShapeId:
+                `preflight.${group.shapeId}.by-logical-id`,
+              step:
+                `preflight.edge.${shortHash(group.shapeId)}.${index}.logical`,
+              mutation: false,
+              chunkIndex: index,
+            },
           );
 
-          const existingLogicalId = asString(
-            record.get("logical_id"),
-            "relationship logical_id",
+        if (
+          byId.records.length > 1 ||
+          byLogicalId.records.length > 1
+        ) {
+          throw new WriterBoundaryError(
+            "DATABASE_EDGE_IDENTITY_COLLISION",
+            "Multiple HydraDB relationships use the same deterministic identity",
           );
+        }
 
-          const sameIdentity =
-            existingId === row.relationship_vertex ||
-            existingLogicalId === row.logical_id;
+        if (
+          byId.records.length === 0 &&
+          byLogicalId.records.length === 0
+        ) {
+          preflightPhase.rowsProcessed += 1;
+          continue;
+        }
 
-          if (!sameIdentity) {
-            continue;
-          }
-
-          const existingKind = asString(
-            record.get("kind"),
-            "relationship kind",
+        if (
+          byId.records.length !== 1 ||
+          byLogicalId.records.length !== 1
+        ) {
+          throw new WriterBoundaryError(
+            "DATABASE_EDGE_IDENTITY_COLLISION",
+            "Existing relationship ID and logical identity do not resolve together",
           );
+        }
 
-          const existingSourceId = asSafeInteger(
-            record.get("source_id"),
-            "relationship source_id",
-          );
-
-          const existingTargetId = asSafeInteger(
-            record.get("target_id"),
-            "relationship target_id",
-          );
-
-          const destinationId = asSafeInteger(
-            record.get("destination_vertex"),
-            "relationship destination vertex",
-          );
+        for (const result of [
+          byId,
+          byLogicalId,
+        ]) {
+          const record = result.records[0];
 
           if (
-            existingId !== row.relationship_vertex ||
-            existingLogicalId !== row.logical_id ||
-            existingKind !== row.kind ||
-            existingSourceId !== row.source_id ||
-            existingTargetId !== row.target_id ||
-            destinationId !== row.destination_vertex
+            asSafeInteger(
+              record.get("source_vertex"),
+              "relationship source vertex",
+            ) !== row.source_vertex ||
+            asSafeInteger(
+              record.get("destination_vertex"),
+              "relationship destination vertex",
+            ) !== row.destination_vertex
           ) {
             throw new WriterBoundaryError(
               "DATABASE_EDGE_IDENTITY_COLLISION",
-              "Existing relationship identity conflicts with the incoming relationship",
+              "Existing relationship identity maps to conflicting endpoints",
             );
           }
+        }
+
+        const exact =
+          await executeStatement(
+            preflightPhase,
+            exactIdentityQuery,
+            {
+              relationship_vertex:
+                row.relationship_vertex,
+              logical_id:
+                row.logical_id,
+              kind:
+                row.kind,
+              source_id:
+                row.source_id,
+              target_id:
+                row.target_id,
+              derived:
+                row.derived,
+            },
+            {
+              phase: "preflight-identities",
+              queryShapeId:
+                `preflight.${group.shapeId}.exact`,
+              step:
+                `preflight.edge.${shortHash(group.shapeId)}.${index}.exact`,
+              mutation: false,
+              chunkIndex: index,
+            },
+          );
+
+        if (exact.records.length !== 1) {
+          throw new WriterBoundaryError(
+            "DATABASE_EDGE_IDENTITY_COLLISION",
+            "Existing relationship identity conflicts with the incoming relationship",
+          );
+        }
+
+        const exactRecord =
+          exact.records[0];
+
+        if (
+          asSafeInteger(
+            exactRecord.get("source_vertex"),
+            "relationship source vertex",
+          ) !== row.source_vertex ||
+          asSafeInteger(
+            exactRecord.get("destination_vertex"),
+            "relationship destination vertex",
+          ) !== row.destination_vertex
+        ) {
+          throw new WriterBoundaryError(
+            "DATABASE_EDGE_IDENTITY_COLLISION",
+            "Existing relationship identity maps to conflicting endpoints",
+          );
         }
 
         preflightPhase.rowsProcessed += 1;
@@ -1259,9 +1397,16 @@ export async function persistGraphBatch(
           verificationPhase,
           query,
           {
-            source_vertex: row.source_vertex,
+            source_vertex:
+              row.source_vertex,
             destination_vertex:
               row.destination_vertex,
+            relationship_vertex:
+              row.relationship_vertex,
+            logical_id:
+              row.logical_id,
+            kind:
+              row.kind,
           },
           {
             phase: "verify",
@@ -1273,36 +1418,10 @@ export async function persistGraphBatch(
           },
         );
 
-        const matchingRecords = result.records.filter(
-          (record) =>
-            asSafeInteger(
-              record.get("relationship_vertex"),
-              "relationship ID",
-            ) === row.relationship_vertex,
-        );
-
-        if (matchingRecords.length !== 1) {
+        if (result.records.length !== 1) {
           throw new WriterBoundaryError(
             "EDGE_VERIFICATION_FAILED",
             "Persisted relationship identity could not be uniquely verified",
-          );
-        }
-
-        const record = matchingRecords[0];
-
-        if (
-          asString(
-            record.get("logical_id"),
-            "relationship logical_id",
-          ) !== row.logical_id ||
-          asString(
-            record.get("kind"),
-            "relationship kind",
-          ) !== row.kind
-        ) {
-          throw new WriterBoundaryError(
-            "EDGE_VERIFICATION_FAILED",
-            "Persisted relationship has an unexpected identity",
           );
         }
 
