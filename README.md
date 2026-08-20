@@ -141,7 +141,7 @@ Compromised Package Version
 - Bounded traversal depth, fan-out, paths, and states
 - Canonical dependency relationships
 - Explicit truncation and warning reporting
-- Evidence Funnel for path confidence analysis
+- Evidence Funnel for path-confidence analysis
 
 ## Why It Matters
 
@@ -585,6 +585,18 @@ The Release Influence Firewall validation confirms:
 
 ---
 
+# License
+
+HydraGuard is licensed under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)**.
+
+This means the project can be used, studied, modified, and shared under the same open-source terms. If someone modifies HydraGuard and provides it as a network-accessible service, they must also make the corresponding source code available under the AGPL.
+
+See the complete [GNU Affero General Public License v3.0 or later](License).
+
+Copyright © 2026 Akshita, Pratik Raj
+
+---
+
 # Run HydraGuard
 
 ## Quick Dashboard Demo
@@ -639,7 +651,7 @@ http://localhost:3000/ready
 # Demo Video and Dashboard
 
 🎥 **YouTube Demo Video:**
-[Add your YouTube demo link here]-https://youtu.be/QQAJx8dwNyI?si=fRTIx5d0YHWyYYEM
+[Watch the HydraGuard demo](https://youtu.be/QQAJx8dwNyI?si=fRTIx5d0YHWyYYEM)
 
 🖥️ **Live Dashboard / Evidence Console:**
 [Add your dashboard link here](YOUR_DASHBOARD_LINK)
