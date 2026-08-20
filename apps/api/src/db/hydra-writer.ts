@@ -430,13 +430,13 @@ function buildEdgeUpsertQuery(
   }
 
   return [
-    "UNWIND $rows AS row",
-    `MERGE (s:${group.sourceLabel} {id: row.source_vertex})` +
-  `-[r:${group.relationshipType} {id: row.relationship_vertex}]->` +
-  `(d:${group.destinationLabel} {id: row.destination_vertex})`,
+  "UNWIND $rows AS row",
+  `MATCH (s:${group.sourceLabel} {id: row.source_vertex})`,
+  `MATCH (d:${group.destinationLabel} {id: row.destination_vertex})`,
+  `MERGE (s)-[r:${group.relationshipType} {id: row.relationship_vertex}]->(d)`,
+  `SET ${assignments.join(", ")}`,
+].join("\n");
 
-    `SET ${assignments.join(", ")}`,
-  ].join("\n");
 }
 
 function buildEdgeIdentityProbeQuery(
