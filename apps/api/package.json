@@ -8,6 +8,8 @@
     "validate:analysis": "tsx src/analysis/fixtures/analysis-smoke.ts",
     "validate:wave2": "tsx src/analysis/fixtures/wave2-smoke.ts",
     "validate:containment": "tsx src/analysis/fixtures/containment-smoke.ts",
+    "validate:release-firewall": "tsx src/analysis/fixtures/release-influence-smoke.ts",
+    "validate:release-persistence": "tsx src/analysis/fixtures/release-persistence-smoke.ts",
     "test:seed": "npx tsx src/seed-test.ts",
     "validate:fixture": "tsx src/domain/fixture.ts",
     "validate:lockfile": "tsx src/ingest/lockfile/lockfile-smoke.ts",
@@ -23,7 +25,7 @@
     "validate:server": "tsx src/api/server-smoke.ts",
     "validate:typosquatting": "tsx src/typosquatting/fixtures/typosquatting-smoke.ts && tsx src/typosquatting/fixtures/graph-contract-smoke.ts && tsx src/typosquatting/fixtures/orchestration-smoke.ts && tsx src/typosquatting/fixtures/lifecycle-smoke.ts",
     "validate:e2e": "tsx src/demo/e2e-smoke.ts",
-    "validate:all": "npm run typecheck && npm run validate:fixture && npm run validate:lockfile && npm run validate:graph-batch && npm run validate:orchestrator && npm run validate:persistence && npm run validate:persistence-service && npm run validate:job-manager && npm run validate:worker-dispatcher && npm run validate:analysis && npm run validate:live-analysis && npm run validate:wave2 && npm run validate:containment && npm run validate:typosquatting && npm run validate:server",
+    "validate:all": "npm run typecheck && npm run validate:fixture && npm run validate:lockfile && npm run validate:graph-batch && npm run validate:orchestrator && npm run validate:persistence && npm run validate:persistence-service && npm run validate:job-manager && npm run validate:worker-dispatcher && npm run validate:analysis && npm run validate:wave2 && npm run validate:containment && npm run validate:release-firewall && npm run validate:release-persistence && npm run validate:typosquatting && npm run validate:live-analysis && npm run validate:server",
     "validate:all:with-hydradb": "npm run validate:all && npm run validate:e2e"
   },
   "dependencies": {

@@ -5,7 +5,12 @@ import type {
 } from "neo4j-driver";
 import type {
   LiveBlastRadiusRunner,
+  PersistedReleaseFirewallRunner,
 } from "./routes/analysis.js";
+
+import {
+  ReleaseInfluenceStoreError,
+} from "../analysis/release-trust/hydra-release-influence-store.js";
 
 import {
   HydraGraphReaderError,
@@ -404,6 +409,100 @@ const fakeAnalysisRunner:
       };
     };
 
+const fakeReleaseFirewallRunner:
+  PersistedReleaseFirewallRunner =
+    async (_reader, snapshotId) => {
+      switch (snapshotId) {
+        case "missing-snapshot":
+          throw new ReleaseInfluenceStoreError(
+            "SNAPSHOT_NOT_FOUND",
+            "Private missing snapshot detail",
+          );
+
+        case "writing-snapshot":
+          throw new ReleaseInfluenceStoreError(
+            "SNAPSHOT_NOT_READY",
+            "Private writing snapshot detail",
+          );
+
+        case "database-unavailable":
+          throw new ReleaseInfluenceStoreError(
+            "DATABASE_QUERY_FAILED",
+            "Private database failure detail",
+          );
+
+        case "corrupt-snapshot":
+          throw new ReleaseInfluenceStoreError(
+            "SNAPSHOT_CORRUPT",
+            "Private corrupt graph detail",
+          );
+      }
+
+      return {
+        snapshotId,
+        persistedAt: 1_700_000_000_000,
+        firewall: {
+          decisions: [
+            {
+              releaseNodeId: 7,
+              subject: {
+                ecosystem: "npm",
+                packageName: "@example/router",
+                version: "1.0.0",
+                artifactDigest: "sha256:fixture",
+              },
+              verdict: "block",
+              reason:
+                "An untrusted workflow crossed a cache boundary.",
+              findings: [
+                {
+                  code: "cross-boundary-cache",
+                  severity: "block",
+                  message:
+                    "Untrusted cache influence reached the release workflow.",
+                  nodeId: 3,
+                  edgeId: 103,
+                  pathKey: "1>2>3>4>6>7",
+                },
+              ],
+              riskPaths: [
+                {
+                  pathKey: "1>2>3>4>6>7",
+                  nodeIds: [1, 2, 3, 4, 6, 7],
+                  edgeIds: [101, 102, 103, 105, 106],
+                  depth: 5,
+                },
+              ],
+              truncated: false,
+              inspectedNodeCount: 7,
+              inspectedEdgeCount: 7,
+            },
+          ],
+          summary: {
+            evaluated: 1,
+            allowed: 0,
+            quarantined: 0,
+            blocked: 1,
+            truncated: 0,
+          },
+          options: {
+            maxDepth: 16,
+            maxTraversalStatesPerRelease: 10_000,
+            maxIncomingEdgesPerNode: 1_000,
+            maxRiskPathsPerRelease: 100,
+            maxFindingsPerRelease: 250,
+            requireEvidence: true,
+            untrustedDisposition: "block",
+            unknownDisposition: "quarantine",
+            crossBoundaryCacheDisposition: "block",
+            unknownCacheBoundaryDisposition: "quarantine",
+          },
+        },
+        consistencyModel:
+          "verified-release-influence-snapshot",
+        engine: "HydraDB",
+      };
+    };
 
 async function main(): Promise<void> {
   const config =
@@ -435,6 +534,8 @@ async function main(): Promise<void> {
         fakeTyposquattingService,
       analysisRunner:
         fakeAnalysisRunner,
+      releaseFirewallRunner:
+        fakeReleaseFirewallRunner,
 
     });
 
@@ -795,6 +896,140 @@ assert.equal(
       "server-smoke-trusted-analyst",
       "server-smoke-trusted-analyst",
     ],
+  );
+
+  const releaseFirewall =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/tanstack-style-demo/firewall",
+    });
+
+  assert.equal(
+    releaseFirewall.statusCode,
+    200,
+  );
+
+  const releaseFirewallBody =
+    releaseFirewall.json();
+
+  assert.equal(
+    releaseFirewallBody.snapshotId,
+    "tanstack-style-demo",
+  );
+  assert.equal(
+    releaseFirewallBody.engine,
+    "HydraDB",
+  );
+  assert.equal(
+    releaseFirewallBody.consistencyModel,
+    "verified-release-influence-snapshot",
+  );
+  assert.equal(
+    releaseFirewallBody.firewall.summary.blocked,
+    1,
+  );
+  assert.equal(
+    releaseFirewallBody.firewall.decisions[0].verdict,
+    "block",
+  );
+  assert.equal(
+    releaseFirewallBody.firewall.decisions[0]
+      .findings[0].code,
+    "cross-boundary-cache",
+  );
+
+  const invalidReleaseSnapshot =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/bad$id/firewall",
+    });
+
+  assert.equal(
+    invalidReleaseSnapshot.statusCode,
+    400,
+  );
+  assert.equal(
+    invalidReleaseSnapshot.json().code,
+    "REQUEST_VALIDATION_FAILED",
+  );
+
+  const missingReleaseSnapshot =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/missing-snapshot/firewall",
+    });
+
+  assert.equal(
+    missingReleaseSnapshot.statusCode,
+    404,
+  );
+  assert.deepEqual(
+    missingReleaseSnapshot.json(),
+    {
+      code:
+        "RELEASE_INFLUENCE_SNAPSHOT_NOT_FOUND",
+      message:
+        "The requested release-influence snapshot was not found.",
+    },
+  );
+  assert.equal(
+    JSON.stringify(
+      missingReleaseSnapshot.json(),
+    ).includes(
+      "Private missing snapshot detail",
+    ),
+    false,
+  );
+
+  const writingReleaseSnapshot =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/writing-snapshot/firewall",
+    });
+
+  assert.equal(
+    writingReleaseSnapshot.statusCode,
+    409,
+  );
+  assert.equal(
+    writingReleaseSnapshot.json().code,
+    "RELEASE_INFLUENCE_SNAPSHOT_NOT_READY",
+  );
+
+  const unavailableReleaseSnapshot =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/database-unavailable/firewall",
+    });
+
+  assert.equal(
+    unavailableReleaseSnapshot.statusCode,
+    503,
+  );
+  assert.equal(
+    unavailableReleaseSnapshot.json().code,
+    "RELEASE_FIREWALL_DATABASE_UNAVAILABLE",
+  );
+
+  const corruptReleaseSnapshot =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/release-influence/snapshots/corrupt-snapshot/firewall",
+    });
+
+  assert.equal(
+    corruptReleaseSnapshot.statusCode,
+    503,
+  );
+  assert.equal(
+    corruptReleaseSnapshot.json().code,
+    "RELEASE_FIREWALL_DATA_UNAVAILABLE",
   );
 
   const unknown =

@@ -19,8 +19,12 @@ import {
   registerAnalysisSchemas,
 } from "./schemas/analysis.js";
 import type {
-    LiveBlastRadiusRunner,
-  } from "./routes/analysis.js";
+  LiveBlastRadiusRunner,
+  PersistedReleaseFirewallRunner,
+} from "./routes/analysis.js";
+import type {
+  ReleaseInfluenceSnapshotReader,
+} from "../analysis/release-trust/persisted-release-firewall.js";
 
 import {
   registerAnalysisRoutes,
@@ -102,6 +106,10 @@ export interface BuildServerOptions {
     AnalystAuthorizer;
   readonly analysisRunner?:
     LiveBlastRadiusRunner;
+  readonly releaseInfluenceReader?:
+    ReleaseInfluenceSnapshotReader;
+  readonly releaseFirewallRunner?:
+    PersistedReleaseFirewallRunner;
 
   /**
    * Injected drivers remain caller-owned by default.
@@ -382,6 +390,22 @@ export async function buildServer(
         : {
             runAnalysis:
               options.analysisRunner,
+          }),
+
+      ...(options.releaseInfluenceReader ===
+      undefined
+        ? {}
+        : {
+            releaseInfluenceReader:
+              options.releaseInfluenceReader,
+          }),
+
+      ...(options.releaseFirewallRunner ===
+      undefined
+        ? {}
+        : {
+            runReleaseFirewall:
+              options.releaseFirewallRunner,
           }),
     },
   );
