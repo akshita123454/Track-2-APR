@@ -8,6 +8,14 @@ import type {
   Driver,
 } from "neo4j-driver";
 import {
+  createStaticAnalystAuthorizer,
+} from "./analyst-authorization.js";
+
+import type {
+  AnalystAuthorizer,
+} from "./analyst-authorization.js";
+
+import {
   registerAnalysisSchemas,
 } from "./schemas/analysis.js";
 import type {
@@ -25,6 +33,10 @@ import {
 import {
   HydraIncidentService,
 } from "../incidents/incident-service.js";
+
+import {
+  TyposquattingService,
+} from "../typosquatting/service.js";
 
 import {
   JobManager,
@@ -55,6 +67,10 @@ import {
 } from "./routes/incidents.js";
 
 import {
+  registerTyposquattingRoutes,
+} from "./routes/typosquatting.js";
+
+import {
   loadApiConfig,
 } from "./config.js";
 
@@ -80,6 +96,10 @@ export interface BuildServerOptions {
 
   readonly incidentCreator?:
     IncidentCreator;
+  readonly typosquattingService?:
+    TyposquattingService;
+  readonly analystAuthorizer?:
+    AnalystAuthorizer;
   readonly analysisRunner?:
     LiveBlastRadiusRunner;
 
@@ -97,6 +117,8 @@ export interface HydraGuardServer {
   readonly jobManager: JobManager;
   readonly dispatcher:
     WorkerDispatcher;
+  readonly typosquattingService:
+    TyposquattingService;
 }
 
 async function createDriver(
@@ -168,6 +190,26 @@ export async function buildServer(
       .persistenceService ??
     new HydraPersistenceService(
       driver,
+    );
+
+  const typosquattingService =
+    options.typosquattingService ??
+    new TyposquattingService(
+      driver,
+      persistence,
+      {
+        persistenceOptions:
+          config.persistence,
+      },
+    );
+
+  const analystAuthorizer =
+    options.analystAuthorizer ??
+    createStaticAnalystAuthorizer(
+      config.typosquattingReview
+        .bearerToken,
+      config.typosquattingReview
+        .reviewer,
     );
 
   const incidentCreator =
@@ -257,6 +299,8 @@ export async function buildServer(
       workerDependencies: {
         jobManager,
         persistence,
+        typosquatting:
+          typosquattingService,
 
         npmRegistry: {
           registryUrl:
@@ -290,6 +334,41 @@ export async function buildServer(
     registerIncidentRoutes,
     {
       incidentCreator,
+    },
+  );
+  await app.register(
+    registerTyposquattingRoutes,
+    {
+      jobManager,
+      dispatcher,
+      service:
+        typosquattingService,
+      analystAuthorizer,
+      workerDependencies: {
+        jobManager,
+        persistence,
+        typosquatting:
+          typosquattingService,
+        npmRegistry: {
+          registryUrl:
+            config.npmRegistry
+              .registryUrl,
+          timeoutMs:
+            config.npmRegistry
+              .timeoutMs,
+          retries:
+            config.npmRegistry
+              .retries,
+          maxResponseBytes:
+            config.npmRegistry
+              .maxResponseBytes,
+        },
+        npmConcurrency:
+          config.npmRegistry
+            .concurrency,
+        persistenceOptions:
+          config.persistence,
+      },
     },
   );
   await app.register(
@@ -338,5 +417,6 @@ export async function buildServer(
     driver,
     jobManager,
     dispatcher,
+    typosquattingService,
   });
 }

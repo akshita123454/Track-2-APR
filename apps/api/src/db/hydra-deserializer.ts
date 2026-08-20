@@ -106,6 +106,7 @@ const NODE_KINDS = [
   "Incident",
   "Evidence",
   "Control",
+  "Finding",
 ] as const satisfies readonly NodeKind[];
 
 const EDGE_KINDS = [
@@ -126,6 +127,8 @@ const EDGE_KINDS = [
   "AFFECTS",
   "SUPPORTS",
   "TARGETS",
+  "LOOKALIKE_OF",
+  "IMITATES",
   "USED_BY",
 ] as const satisfies readonly GraphRelKind[];
 
@@ -183,6 +186,8 @@ const EVIDENCE_SOURCE_TYPES = [
   "sigstore",
   "runtime-telemetry",
   "security-advisory",
+  "typosquat-detector",
+  "analyst-review",
   "synthetic-fixture",
   "other",
 ] as const;
@@ -205,6 +210,26 @@ const CONTROL_STATUSES = [
   "simulated",
   "approved",
   "applied",
+] as const;
+
+const FINDING_STATUSES = [
+  "candidate",
+  "suspicious",
+  "high-confidence",
+  "confirmed",
+  "dismissed",
+] as const;
+
+const TRANSFORMATION_KINDS = [
+  "adjacent-transposition",
+  "insertion",
+  "deletion",
+  "substitution",
+  "separator-variation",
+  "repeated-character",
+  "scope-impersonation",
+  "unicode-confusable",
+  "prefix-suffix",
 ] as const;
 
 const DEPENDENCY_TYPES = [
@@ -530,6 +555,27 @@ function readFiniteNonnegative(
       entityType,
       key,
       "must be nonnegative",
+    );
+  }
+
+  return value;
+}
+
+function readFiniteRange(
+  row: Readonly<Record<string, HydraScalar>>,
+  key: string,
+  minimum: number,
+  maximum: number,
+  entityType: HydraEntityType,
+): number {
+  const value = readNumber(row, key, entityType);
+
+  if (value < minimum || value > maximum) {
+    return fail(
+      "PROPERTY_VALUE_INVALID",
+      entityType,
+      key,
+      `must be between ${minimum} and ${maximum}`,
     );
   }
 
@@ -870,6 +916,36 @@ function decodeStringSet(
   }
 
   return values;
+}
+
+function decodeNonemptyStringSet(
+  row: Readonly<Record<string, HydraScalar>>,
+  key: string,
+  entityType: HydraEntityType,
+): readonly string[] {
+  const values = decodeStringSet(row, key, entityType);
+
+  if (values.length === 0) {
+    return fail(
+      "PROPERTY_VALUE_INVALID",
+      entityType,
+      key,
+      "must not be empty",
+    );
+  }
+
+  return values;
+}
+
+function decodeEnumSet<const Values extends readonly string[]>(
+  row: Readonly<Record<string, HydraScalar>>,
+  key: string,
+  allowedValues: Values,
+  entityType: HydraEntityType,
+): readonly Values[number][] {
+  return decodeNonemptyStringSet(row, key, entityType).map(
+    (value) => readEnum(value, allowedValues, entityType, key),
+  );
 }
 
 function readOptionalText(
@@ -1550,6 +1626,76 @@ export function deserializeHydraNode(
         ),
       };
 
+    case "Finding": {
+      const status = readRowEnum(
+        row,
+        "status",
+        FINDING_STATUSES,
+        entityType,
+      );
+      const decidedAt = readOptionalTimestamp(
+        row,
+        "decided_at",
+        "has_decided_at",
+        entityType,
+      );
+      const decisionReason = readOptionalText(
+        row,
+        "decision_reason",
+        "has_decision_reason",
+        entityType,
+        true,
+      );
+      const terminal = status === "confirmed" || status === "dismissed";
+
+      if (
+        terminal !== (decidedAt !== undefined) ||
+        terminal !== (decisionReason !== undefined)
+      ) {
+        return fail(
+          "PROPERTY_VALUE_INVALID",
+          entityType,
+          "status",
+          "decision fields do not match the finding status",
+        );
+      }
+
+      return {
+        ...base,
+        kind,
+        findingType: readRowEnum(
+          row,
+          "finding_type",
+          ["typosquatting"] as const,
+          entityType,
+        ),
+        status,
+        score: readFiniteRange(row, "score", 0, 100, entityType),
+        detectorVersion: readNonemptyText(row, "detector_version", entityType),
+        policyVersion: readNonemptyText(row, "policy_version", entityType),
+        corpusId: readNonemptyText(row, "corpus_id", entityType),
+        comparisonVersion: readNonemptyText(row, "comparison_version", entityType),
+        indexVersion: readNonemptyText(row, "index_version", entityType),
+        candidatePackageName: readNonemptyText(row, "candidate_package_name", entityType),
+        targetPackageName: readNonemptyText(row, "target_package_name", entityType),
+        summary: readNonemptyText(row, "summary", entityType),
+        transformations: decodeEnumSet(
+          row,
+          "transformations_json",
+          TRANSFORMATION_KINDS,
+          entityType,
+        ),
+        reasonCodes: decodeNonemptyStringSet(
+          row,
+          "reason_codes_json",
+          entityType,
+        ),
+        detectedAt: readSafeInteger(row, "detected_at", entityType),
+        ...(decidedAt === undefined ? {} : { decidedAt }),
+        ...(decisionReason === undefined ? {} : { decisionReason }),
+      };
+    }
+
     default:
       return assertNever(kind);
   }
@@ -1864,6 +2010,40 @@ export function deserializeHydraEdge(
           "has_integrity",
           entityType,
           false,
+        ),
+      };
+
+    case "LOOKALIKE_OF":
+      if (sourceId === targetId) {
+        return fail(
+          "ENDPOINT_MISMATCH",
+          entityType,
+          "target_id",
+          "LOOKALIKE_OF endpoints must be distinct",
+        );
+      }
+
+      return {
+        ...canonicalBase,
+        kind,
+        algorithm: readNonemptyText(row, "algorithm", entityType),
+        comparisonVersion: readNonemptyText(
+          row,
+          "comparison_version",
+          entityType,
+        ),
+        normalizedDistance: readFiniteRange(
+          row,
+          "normalized_distance",
+          0,
+          1,
+          entityType,
+        ),
+        transformations: decodeEnumSet(
+          row,
+          "transformations_json",
+          TRANSFORMATION_KINDS,
+          entityType,
         ),
       };
 

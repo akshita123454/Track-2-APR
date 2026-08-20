@@ -12,6 +12,7 @@ import { ErrorState } from './components/ErrorState';
 import { EmptyState } from './components/EmptyState';
 import { NoServiceState } from './components/NoServiceState';
 import { useBlastRadius } from './hooks/useBlastRadius';
+import { TyposquattingView } from './components/TyposquattingView';
 
 function getInitialIncidentId(): number | null {
   const raw = new URLSearchParams(window.location.search).get('incidentId');
@@ -21,20 +22,39 @@ function getInitialIncidentId(): number | null {
   return Number.isSafeInteger(id) && id >= 0 ? id : null;
 }
 
+function getInitialFindingId(): number | null {
+  const raw = new URLSearchParams(window.location.search).get('findingId');
+  if (raw === null || !/^(0|[1-9]\d*)$/.test(raw)) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id >= 0 ? id : null;
+}
+
+function getInitialView(): 'incidents' | 'findings' {
+  return new URLSearchParams(window.location.search).get('view') === 'findings'
+    ? 'findings'
+    : 'incidents';
+}
+
 export default function App() {
+  const [view, setView] = useState<'incidents' | 'findings'>(getInitialView);
+  const [findingId, setFindingId] = useState<number | null>(getInitialFindingId);
   const [incidentId, setIncidentId] = useState<number | null>(getInitialIncidentId);
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
   const [selectedPathKey, setSelectedPathKey] = useState<string | null>(null);
-  const { data, loading, error, refetch } = useBlastRadius(incidentId);
+  const { data, loading, error, refetch } = useBlastRadius(view === 'incidents' ? incidentId : null);
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    url.searchParams.set('view', view);
     if (incidentId === null) url.searchParams.delete('incidentId');
     else url.searchParams.set('incidentId', incidentId.toString());
+    if (findingId === null) url.searchParams.delete('findingId');
+    else url.searchParams.set('findingId', findingId.toString());
     window.history.replaceState(null, '', url.toString());
-  }, [incidentId]);
+  }, [view, incidentId, findingId]);
 
   const selectedService = data?.services.find(({ service }) => service.id === selectedServiceId);
+  const selectedImpact = data?.serviceImpacts.find(({ serviceId }) => serviceId === selectedServiceId);
   const selectedPath = selectedService?.paths.find((path) => path.pathKey === selectedPathKey)
     ?? selectedService?.paths[0]
     ?? null;
@@ -50,11 +70,18 @@ export default function App() {
       <header className="flex flex-col gap-3 border-b border-hydra-border px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-start gap-3">
           <span className="pt-1 text-xl font-bold tracking-tight"><span className="text-hydra-accent">Hydra</span>Guard</span>
-          <IncidentSelector selectedId={incidentId} onSelect={selectIncident} />
+          <nav className="flex rounded border border-hydra-border p-0.5 text-sm">
+            <button type="button" onClick={() => setView('incidents')} className={`rounded px-3 py-1.5 ${view === 'incidents' ? 'bg-cyan-500/15 text-cyan-300' : 'text-hydra-muted'}`}>Incidents</button>
+            <button type="button" onClick={() => setView('findings')} className={`rounded px-3 py-1.5 ${view === 'findings' ? 'bg-cyan-500/15 text-cyan-300' : 'text-hydra-muted'}`}>Typosquatting</button>
+          </nav>
+          {view === 'incidents' && <IncidentSelector selectedId={incidentId} onSelect={selectIncident} />}
         </div>
-        {!loading && !error && data && <HydraTelemetry telemetry={data.hydraRead} />}
+        {view === 'incidents' && !loading && !error && data && <HydraTelemetry telemetry={data.hydraRead} />}
       </header>
 
+      {view === 'findings' ? (
+        <TyposquattingView findingId={findingId} onSelectFinding={setFindingId} />
+      ) : (
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {loading && <LoadingSkeleton />}
         {!loading && error && <ErrorState message={error} onRetry={refetch} />}
@@ -87,13 +114,13 @@ export default function App() {
                   <div className="absolute bottom-4 left-4"><GraphLegend /></div>
                 </div>
 
-                {selectedService && (
+                {selectedService && selectedImpact && (
                   <div className="max-h-[46rem] w-full overflow-y-auto border-t border-hydra-border xl:max-h-none xl:w-96 xl:flex-none xl:border-l xl:border-t-0">
                     <WhyAffectedPanel
                       service={selectedService}
+                      impact={selectedImpact}
                       selectedPath={selectedPath}
                       evidenceCatalog={data.evidenceCatalog}
-                      highConfidenceThreshold={data.evidenceFunnel.highConfidenceThreshold}
                       onSelectPath={setSelectedPathKey}
                     />
                   </div>
@@ -111,6 +138,7 @@ export default function App() {
           </>
         )}
       </main>
+      )}
     </div>
   );
 }

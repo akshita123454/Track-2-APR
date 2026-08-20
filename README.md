@@ -553,7 +553,28 @@ HYDRADB_USER=neo4j
 HYDRADB_TOKEN=replace-with-local-development-token
 HYDRADB_DATABASE=default
 API_PORT=3000
+
+# Analyst authorization for typosquatting finding review.
+# Required in production; falls back to a development value otherwise.
+# 16-512 characters, no whitespace.
+TYPOSQUATTING_ANALYST_BEARER_TOKEN=replace-with-local-development-analyst-token
+
+# Trusted reviewer identity recorded on every analyst-review Evidence node.
+TYPOSQUATTING_ANALYST_PRINCIPAL=local-dashboard-analyst
+
+# Dashboard copy of the same token, read from dashboard/.env at build time.
+VITE_TYPOSQUATTING_ANALYST_TOKEN=replace-with-local-development-analyst-token
 ```
+
+The API reads `process.env` directly and does not auto-load `.env`. Export the
+variables in your shell, or start it with `npx tsx --env-file=.env src/api/index.ts`.
+The dashboard is a Vite app, so it does load `dashboard/.env` automatically, but
+inlines `VITE_`-prefixed values into the public bundle at build time. Treat the
+dashboard token as public to anyone who can load the page; it prevents
+caller-asserted reviewer identity, not unauthorized page access.
+
+Without `VITE_TYPOSQUATTING_ANALYST_TOKEN`, findings still list and open, but
+dismiss and promote return `401 ANALYST_AUTHENTICATION_REQUIRED`.
 
 A port accepting connections is not sufficient validation. Setup is complete only after a graph write and reverse traversal both round-trip successfully.
 

@@ -19,6 +19,10 @@ import type {
   IncidentCreator,
 } from "./routes/incidents.js";
 
+import type {
+  TyposquattingService,
+} from "../typosquatting/service.js";
+
 import {
   loadApiConfig,
 } from "./config.js";
@@ -59,6 +63,136 @@ const fakeIncidentCreator:
             "active" as const,
         }),
   };
+const fakeFinding = Object.freeze({
+  id: 321,
+  logicalId:
+    "finding:typosquatting:server-smoke",
+  kind: "Finding" as const,
+  evidenceIds: [654],
+  synthetic: false,
+  observedAt: 1_700_000_000_000,
+  findingType: "typosquatting" as const,
+  status: "suspicious" as const,
+  score: 72,
+  detectorVersion: "detector-v1",
+  policyVersion: "policy-v1",
+  corpusId: "corpus-v1",
+  comparisonVersion: "comparison-v1",
+  indexVersion: "index-v1",
+  candidatePackageName: "lodahs",
+  targetPackageName: "lodash",
+  summary: "Heuristic lockfile-backed name similarity finding.",
+  transformations: ["adjacent-transposition" as const],
+  reasonCodes: ["EXPOSURE_LOCKFILE"],
+  detectedAt: 1_700_000_000_000,
+});
+
+const reviewCommands: Array<{
+  readonly action: "dismiss" | "promote";
+  readonly reviewer: string;
+}> = [];
+
+const fakeTyposquattingService = {
+  listFindings: async () => ({
+    findings: [fakeFinding],
+    truncated: false,
+  }),
+  getFindingDetail: async () => ({
+    finding: fakeFinding,
+    candidate: {
+      id: 111,
+      logicalId: "pkg:npm:lodahs",
+      kind: "Package" as const,
+      evidenceIds: [654],
+      synthetic: false,
+      observedAt: 1_700_000_000_000,
+      ecosystem: "npm" as const,
+      name: "lodahs",
+    },
+    target: {
+      id: 112,
+      logicalId: "pkg:npm:lodash",
+      kind: "Package" as const,
+      evidenceIds: [655],
+      synthetic: false,
+      observedAt: 1_700_000_000_000,
+      ecosystem: "npm" as const,
+      name: "lodash",
+    },
+    evidence: [{
+      id: 654,
+      logicalId: "evidence:server-smoke-typo",
+      kind: "Evidence" as const,
+      evidenceIds: [] as const,
+      synthetic: false,
+      observedAt: 1_700_000_000_000,
+      sourceType: "package-lock" as const,
+      sourceUri: "fixture://private-source-must-not-leak",
+      collectorVersion: "fixture-v1",
+      confidence: 1,
+      detail: "private-detail-must-not-leak",
+    }],
+    exactVersions: {
+      versions: [{
+        id: 113,
+        logicalId: "pkgver:npm:lodahs@1.0.0",
+        kind: "PackageVersion" as const,
+        evidenceIds: [654],
+        synthetic: false,
+        observedAt: 1_700_000_000_000,
+        ecosystem: "npm" as const,
+        packageName: "lodahs",
+        version: "1.0.0",
+      }],
+      scannedCount: 1,
+      truncated: false,
+    },
+    exposure: {
+      services: [{
+        serviceId: 114,
+        serviceLogicalId: "service:server-smoke",
+        serviceName: "server-smoke",
+        serviceCriticality: "high" as const,
+        packageVersionIds: [113],
+        evidenceIds: [654],
+      }],
+      truncated: false,
+      traversalStates: 1,
+      limits: {
+        maxDepth: 12,
+        maxServices: 100,
+        maxTraversalStates: 2_000,
+        maxDependentsPerNode: 250,
+      },
+    },
+    incidentIds: [],
+  }),
+  reviewFinding: async (command: {
+    readonly action: "dismiss" | "promote";
+    readonly reviewer: string;
+  }) => {
+    reviewCommands.push(command);
+    return ({
+      finding: {
+        ...fakeFinding,
+        status: command.action === "dismiss" ? "dismissed" as const : "confirmed" as const,
+        decidedAt: 1_700_000_001_000,
+        decisionReason: "Reviewed in server smoke",
+      },
+      ...(command.action === "promote" ? { incidentId: 999 } : {}),
+      replayed: false,
+    });
+  },
+  scanLockfile: async () => ({
+    sourceFingerprint: "0".repeat(64),
+    corpusId: "corpus-v1",
+    packageCount: 0,
+    findingCount: 0,
+    findingIds: [],
+    diagnostics: {},
+  }),
+} as unknown as TyposquattingService;
+
 const unsafeEvidenceEntry = {
   id: 789,
   sourceType:
@@ -121,6 +255,8 @@ const fakeAnalysisRunner:
         evidenceCatalog: [
           unsafeEvidenceEntry,
         ],
+
+        serviceImpacts: [],
 
         affectedVersionLookup: {
           limit:
@@ -281,6 +417,10 @@ async function main(): Promise<void> {
       HYDRADB_USER: "neo4j",
       HYDRADB_TOKEN:
         "server-smoke-token",
+      TYPOSQUATTING_ANALYST_BEARER_TOKEN:
+        "server-smoke-analyst-token",
+      TYPOSQUATTING_ANALYST_PRINCIPAL:
+        "server-smoke-trusted-analyst",
     });
 
   const runtime =
@@ -291,6 +431,8 @@ async function main(): Promise<void> {
         fakePersistence,
       incidentCreator:
         fakeIncidentCreator,
+      typosquattingService:
+        fakeTyposquattingService,
       analysisRunner:
         fakeAnalysisRunner,
 
@@ -447,6 +589,11 @@ async function main(): Promise<void> {
     "poisoned-demo-lib",
   );
 
+  assert.deepEqual(
+    analysisBody.serviceImpacts,
+    [],
+  );
+
   assert.equal(
     analysisBody.hydraRead.engine,
     "HydraDB",
@@ -544,6 +691,111 @@ assert.equal(
   ),
   false,
 );
+
+  const findings =
+    await runtime.app.inject({
+      method: "GET",
+      url: "/typosquatting/findings?limit=10",
+    });
+
+  assert.equal(findings.statusCode, 200);
+  assert.equal(findings.json().findings[0].findingId, 321);
+  assert.equal(findings.json().findings[0].scoreMeaning, "heuristic-ranking-not-probability");
+
+  const invalidCursor =
+    await runtime.app.inject({
+      method: "GET",
+      url: "/typosquatting/findings?cursorDetectedAt=1",
+    });
+
+  assert.equal(invalidCursor.statusCode, 400);
+  assert.equal(invalidCursor.json().code, "INVALID_FINDING_CURSOR");
+
+  const findingDetail =
+    await runtime.app.inject({
+      method: "GET",
+      url: "/typosquatting/findings/321",
+    });
+
+  assert.equal(findingDetail.statusCode, 200);
+  assert.equal(findingDetail.json().exactVersions[0].version, "1.0.0");
+  assert.equal(findingDetail.json().exposure.services[0].serviceName, "server-smoke");
+  const serializedFinding = JSON.stringify(findingDetail.json());
+  assert.equal(serializedFinding.includes("private-source-must-not-leak"), false);
+  assert.equal(serializedFinding.includes("private-detail-must-not-leak"), false);
+
+  const missingReviewKey =
+    await runtime.app.inject({
+      method: "POST",
+      url: "/typosquatting/findings/321/dismiss",
+      payload: {
+        reason: "Reviewed fixture",
+      },
+    });
+
+  assert.equal(missingReviewKey.statusCode, 400);
+
+  const unauthorizedPromotion =
+    await runtime.app.inject({
+      method: "POST",
+      url: "/typosquatting/findings/321/promote",
+      headers: {
+        "idempotency-key": "server-smoke-unauthorized-001",
+      },
+      payload: {
+        reason: "Untrusted confirmation attempt",
+      },
+    });
+
+  assert.equal(unauthorizedPromotion.statusCode, 401);
+  assert.equal(
+    unauthorizedPromotion.json().code,
+    "ANALYST_AUTHENTICATION_REQUIRED",
+  );
+  assert.equal(
+    unauthorizedPromotion.headers["www-authenticate"],
+    'Bearer realm="hydraguard-analyst"',
+  );
+
+  const dismissed =
+    await runtime.app.inject({
+      method: "POST",
+      url: "/typosquatting/findings/321/dismiss",
+      headers: {
+        authorization: "Bearer server-smoke-analyst-token",
+        "idempotency-key": "server-smoke-dismiss-001",
+      },
+      payload: {
+        reason: "Reviewed fixture",
+      },
+    });
+
+  assert.equal(dismissed.statusCode, 200);
+  assert.equal(dismissed.json().finding.status, "dismissed");
+
+  const promoted =
+    await runtime.app.inject({
+      method: "POST",
+      url: "/typosquatting/findings/321/promote",
+      headers: {
+        authorization: "Bearer server-smoke-analyst-token",
+        "idempotency-key": "server-smoke-promote-001",
+      },
+      payload: {
+        reason: "Confirmed fixture",
+      },
+    });
+
+  assert.equal(promoted.statusCode, 200);
+  assert.equal(promoted.json().finding.status, "confirmed");
+  assert.equal(promoted.json().incidentId, 999);
+  assert.deepEqual(
+    reviewCommands.map((command) => command.reviewer),
+    [
+      "server-smoke-trusted-analyst",
+      "server-smoke-trusted-analyst",
+    ],
+  );
 
   const unknown =
     await runtime.app.inject({

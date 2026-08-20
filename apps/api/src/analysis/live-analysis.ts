@@ -24,6 +24,14 @@ import {
 } from "./core/evidence-funnel.js";
 
 import {
+  buildServiceImpactExplanations,
+} from "./core/service-impact-explanation.js";
+
+import type {
+  ServiceImpactExplanation,
+} from "./core/service-impact-explanation.js";
+
+import {
   HydraGraphReader,
 } from "./readers/hydra-graph-reader.js";
 
@@ -158,6 +166,14 @@ export interface LiveBlastRadiusResult
    */
   readonly evidenceCatalog:
     readonly LiveEvidenceCatalogEntry[];
+
+  /**
+   * Canonical backend decisions for each returned Service candidate.
+   * Dashboard consumers must render these decisions rather than infer a
+   * security state from graph shape or evidence confidence locally.
+   */
+  readonly serviceImpacts:
+    readonly ServiceImpactExplanation[];
 
   readonly affectedVersionLookup:
     AffectedVersionLookupSummary;
@@ -616,6 +632,23 @@ const evidenceFunnel:
             ]),
         });
 
+const serviceImpacts =
+  buildServiceImpactExplanations(
+    blastRadius,
+    affectedVersionPage
+      .affectedVersions,
+    catalog.entries,
+    {
+      asOf: startedAtMs,
+      highConfidenceThreshold:
+        evidenceFunnel
+          .highConfidenceThreshold,
+      evidenceComplete:
+        evidenceFunnel
+          .completeForIncident,
+    },
+  );
+
 
   const completedAtMs =
     readClock(clock, "completion");
@@ -668,6 +701,8 @@ affectedVersions:
 
 evidenceCatalog:
   catalog.entries,
+
+serviceImpacts,
 
     affectedVersionLookup:
       Object.freeze({

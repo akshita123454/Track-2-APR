@@ -10,6 +10,11 @@ export interface ApiConfig {
   readonly corsOrigins: readonly string[];
   readonly logging: boolean;
 
+  readonly typosquattingReview: {
+    readonly bearerToken: string;
+    readonly reviewer: string;
+  };
+
   readonly hydra: {
     readonly uri: string;
     readonly user: string;
@@ -148,6 +153,49 @@ function readEnvironment(
   return value;
 }
 
+function readAnalystBearerToken(
+  env: NodeJS.ProcessEnv,
+  environment: ApiConfig["environment"],
+): string {
+  const token = readText(
+    env,
+    "TYPOSQUATTING_ANALYST_BEARER_TOKEN",
+    environment === "production"
+      ? undefined
+      : "local-development-analyst-token",
+  );
+
+  if (
+    token.length < 16 ||
+    token.length > 512 ||
+    /\s/.test(token)
+  ) {
+    throw new Error(
+      "TYPOSQUATTING_ANALYST_BEARER_TOKEN must contain 16 to 512 non-whitespace characters",
+    );
+  }
+
+  return token;
+}
+
+function readAnalystPrincipal(
+  env: NodeJS.ProcessEnv,
+): string {
+  const reviewer = readText(
+    env,
+    "TYPOSQUATTING_ANALYST_PRINCIPAL",
+    "local-dashboard-analyst",
+  );
+
+  if (reviewer.length > 200) {
+    throw new Error(
+      "TYPOSQUATTING_ANALYST_PRINCIPAL must contain at most 200 characters",
+    );
+  }
+
+  return reviewer;
+}
+
 function readUrl(
   env: NodeJS.ProcessEnv,
   name: string,
@@ -233,6 +281,8 @@ export function loadApiConfig(
   env: NodeJS.ProcessEnv =
     process.env,
 ): ApiConfig {
+  const environment =
+    readEnvironment(env);
   const maxJobs =
     readInteger(
       env,
@@ -273,8 +323,7 @@ export function loadApiConfig(
   }
 
   return Object.freeze({
-    environment:
-      readEnvironment(env),
+    environment,
 
     host:
       readText(
@@ -310,6 +359,17 @@ export function loadApiConfig(
         "API_LOGGING",
         true,
       ),
+
+    typosquattingReview:
+      Object.freeze({
+        bearerToken:
+          readAnalystBearerToken(
+            env,
+            environment,
+          ),
+        reviewer:
+          readAnalystPrincipal(env),
+      }),
 
     hydra: Object.freeze({
       uri:

@@ -15,6 +15,10 @@ import {
   IncidentServiceError,
 } from "../incidents/incident-service.js";
 
+import {
+  TyposquattingServiceError,
+} from "../typosquatting/service.js";
+
 export class ApiError
   extends Error {
   constructor(
@@ -108,7 +112,9 @@ export function registerErrorHandling(
         error instanceof
           WorkerDispatcherError ||
         error instanceof
-          IncidentServiceError
+          IncidentServiceError ||
+        error instanceof
+          TyposquattingServiceError
       ) {
         return reply
           .code(

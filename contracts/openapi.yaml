@@ -16,8 +16,253 @@ servers:
 tags:
   - name: Ingestions
   - name: Incidents
+  - name: Typosquatting
 
 paths:
+  /typosquatting/scans:
+    post:
+      tags: [Typosquatting]
+      operationId: createTyposquattingScan
+      summary: Scan an npm lockfile for typosquatting findings
+      description: >
+        Accepts the same evidence-backed lockfile request as lockfile ingestion
+        and asynchronously scans its exact package resolutions for
+        typosquatting candidates.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LockfileIngestionRequest"
+      responses:
+        "202":
+          description: Typosquatting scan accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestionAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: A referenced resource was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The scan could not be created due to an internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The scan service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /typosquatting/findings:
+    get:
+      tags: [Typosquatting]
+      operationId: listTyposquattingFindings
+      summary: List typosquatting findings
+      description: >
+        Returns a bounded page of findings. cursorDetectedAt and
+        cursorFindingId must either both be supplied or both be omitted.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursorDetectedAt
+          in: query
+          required: false
+          description: Supply together with cursorFindingId.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+        - name: cursorFindingId
+          in: query
+          required: false
+          description: Supply together with cursorDetectedAt.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+      responses:
+        "200":
+          description: A bounded page of typosquatting findings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TyposquattingFindingListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: A referenced resource was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: Findings could not be listed due to an internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The findings service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /typosquatting/findings/{findingId}:
+    get:
+      tags: [Typosquatting]
+      operationId: getTyposquattingFinding
+      summary: Get a typosquatting finding
+      parameters:
+        - $ref: "#/components/parameters/TyposquattingFindingId"
+      responses:
+        "200":
+          description: Detailed finding, evidence, versions, and exposure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TyposquattingFindingDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: The finding was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The finding could not be read due to an internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The findings service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /typosquatting/findings/{findingId}/dismiss:
+    post:
+      tags: [Typosquatting]
+      operationId: dismissTyposquattingFinding
+      summary: Dismiss a typosquatting finding
+      security:
+        - analystBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TyposquattingFindingId"
+        - $ref: "#/components/parameters/RequiredIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TyposquattingFindingReviewRequest"
+      responses:
+        "200":
+          description: Finding dismissed, or the prior response replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TyposquattingFindingReviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AnalystAuthenticationRequired"
+        "404":
+          description: The finding was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The finding could not be reviewed due to an internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The findings service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /typosquatting/findings/{findingId}/promote:
+    post:
+      tags: [Typosquatting]
+      operationId: promoteTyposquattingFinding
+      summary: Promote a typosquatting finding
+      description: Replays the deterministic confirmation graph when repairing a prior partial persistence failure.
+      security:
+        - analystBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TyposquattingFindingId"
+        - $ref: "#/components/parameters/RequiredIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TyposquattingFindingReviewRequest"
+      responses:
+        "200":
+          description: Finding promoted, repaired, or the prior response replayed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TyposquattingFindingReviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AnalystAuthenticationRequired"
+        "404":
+          description: The finding was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The finding could not be reviewed due to an internal error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The findings service is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /ingestions/npm:
     post:
       tags: [Ingestions]
@@ -162,6 +407,13 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  securitySchemes:
+    analystBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque analyst token
+      description: The API maps this token to a trusted server-configured analyst principal.
+
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -173,8 +425,41 @@ components:
         type: string
         minLength: 8
         maxLength: 80
+        pattern: "^[A-Za-z0-9._-]{8,80}$"
+
+    RequiredIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable caller-generated key preventing duplicate reviews.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 80
+        pattern: "^[A-Za-z0-9._-]{8,80}$"
+
+    TyposquattingFindingId:
+      name: findingId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^(0|[1-9][0-9]{0,15})$"
+        maxLength: 16
 
   responses:
+    AnalystAuthenticationRequired:
+      description: A valid analyst bearer token is required.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: Bearer authentication challenge.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
     BadRequest:
       description: Request validation failed.
       content:
@@ -190,6 +475,324 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    TyposquattingId:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+
+    TyposquattingFindingStatus:
+      type: string
+      enum:
+        - candidate
+        - suspicious
+        - high-confidence
+        - confirmed
+        - dismissed
+
+    TyposquattingTransformation:
+      type: string
+      enum:
+        - adjacent-transposition
+        - insertion
+        - deletion
+        - substitution
+        - separator-variation
+        - repeated-character
+        - scope-impersonation
+        - unicode-confusable
+        - prefix-suffix
+
+    TyposquattingFindingSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - findingId
+        - status
+        - score
+        - scoreMeaning
+        - candidateName
+        - targetName
+        - summary
+        - transformations
+        - reasonCodes
+        - detectedAt
+        - synthetic
+      properties:
+        findingId:
+          $ref: "#/components/schemas/TyposquattingId"
+        status:
+          $ref: "#/components/schemas/TyposquattingFindingStatus"
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        scoreMeaning:
+          type: string
+          enum: [heuristic-ranking-not-probability]
+        candidateName:
+          type: string
+          minLength: 1
+          maxLength: 214
+        targetName:
+          type: string
+          minLength: 1
+          maxLength: 214
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        transformations:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/TyposquattingTransformation"
+        reasonCodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        detectedAt:
+          $ref: "#/components/schemas/TyposquattingId"
+        decidedAt:
+          $ref: "#/components/schemas/TyposquattingId"
+        decisionReason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        synthetic:
+          type: boolean
+
+    TyposquattingFindingCursor:
+      type: object
+      additionalProperties: false
+      required:
+        - detectedAt
+        - findingId
+      properties:
+        detectedAt:
+          $ref: "#/components/schemas/TyposquattingId"
+        findingId:
+          $ref: "#/components/schemas/TyposquattingId"
+
+    TyposquattingFindingListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - findings
+        - truncated
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/TyposquattingFindingSummary"
+        truncated:
+          type: boolean
+        nextCursor:
+          $ref: "#/components/schemas/TyposquattingFindingCursor"
+
+    TyposquattingEvidenceSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sourceType
+        - confidence
+        - observedAt
+        - synthetic
+      properties:
+        id:
+          $ref: "#/components/schemas/TyposquattingId"
+        sourceType:
+          type: string
+          minLength: 1
+          maxLength: 64
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        observedAt:
+          $ref: "#/components/schemas/TyposquattingId"
+        synthetic:
+          type: boolean
+
+    TyposquattingExactVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - version
+        - synthetic
+      properties:
+        id:
+          $ref: "#/components/schemas/TyposquattingId"
+        version:
+          type: string
+          minLength: 1
+          maxLength: 256
+        synthetic:
+          type: boolean
+
+    TyposquattingVersionLookup:
+      type: object
+      additionalProperties: false
+      required:
+        - scannedCount
+        - truncated
+      properties:
+        scannedCount:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        truncated:
+          type: boolean
+
+    TyposquattingExposureService:
+      type: object
+      additionalProperties: false
+      required:
+        - serviceId
+        - serviceLogicalId
+        - serviceName
+        - serviceCriticality
+        - packageVersionIds
+        - evidenceIds
+      properties:
+        serviceId:
+          $ref: "#/components/schemas/TyposquattingId"
+        serviceLogicalId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        serviceName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        serviceCriticality:
+          type: string
+          enum: [low, medium, high, critical]
+        packageVersionIds:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TyposquattingId"
+        evidenceIds:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TyposquattingId"
+
+    TyposquattingExposureLimits:
+      type: object
+      additionalProperties: false
+      required:
+        - maxDepth
+        - maxServices
+        - maxTraversalStates
+        - maxDependentsPerNode
+      properties:
+        maxDepth:
+          type: integer
+          minimum: 1
+        maxServices:
+          type: integer
+          minimum: 1
+        maxTraversalStates:
+          type: integer
+          minimum: 1
+        maxDependentsPerNode:
+          type: integer
+          minimum: 1
+
+    TyposquattingExposure:
+      type: object
+      additionalProperties: false
+      required:
+        - services
+        - truncated
+        - traversalStates
+        - limits
+      properties:
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/TyposquattingExposureService"
+        truncated:
+          type: boolean
+        traversalStates:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        limits:
+          $ref: "#/components/schemas/TyposquattingExposureLimits"
+
+    TyposquattingFindingDetailResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - finding
+        - candidatePackageId
+        - targetPackageId
+        - evidence
+        - exactVersions
+        - versionLookup
+        - exposure
+        - incidentIds
+      properties:
+        finding:
+          $ref: "#/components/schemas/TyposquattingFindingSummary"
+        candidatePackageId:
+          $ref: "#/components/schemas/TyposquattingId"
+        targetPackageId:
+          $ref: "#/components/schemas/TyposquattingId"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/TyposquattingEvidenceSummary"
+        exactVersions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TyposquattingExactVersion"
+        versionLookup:
+          $ref: "#/components/schemas/TyposquattingVersionLookup"
+        exposure:
+          $ref: "#/components/schemas/TyposquattingExposure"
+        incidentIds:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/TyposquattingId"
+
+    TyposquattingFindingReviewRequest:
+      type: object
+      additionalProperties: false
+      description: Reviewer identity is derived from the authenticated analyst principal, never from this body.
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          pattern: '^\S(?:[\s\S]*\S)?$'
+
+    TyposquattingFindingReviewResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - finding
+        - replayed
+      properties:
+        finding:
+          $ref: "#/components/schemas/TyposquattingFindingSummary"
+        incidentId:
+          $ref: "#/components/schemas/TyposquattingId"
+        replayed:
+          type: boolean
+
     ProvenanceInput:
       type: object
       additionalProperties: false
@@ -491,6 +1094,218 @@ components:
           type: integer
           minimum: 0
 
+    HydraGuardEvidenceIds:
+      type: array
+      maxItems: 10000
+      uniqueItems: true
+      items:
+        type: integer
+        minimum: 0
+        maximum: 9007199254740991
+
+    HydraGuardConfidenceAssessment:
+      type: object
+      additionalProperties: false
+      required: [level, policyVersion, supportingEvidenceIds, reasons, complete, synthetic]
+      properties:
+        level:
+          type: string
+          enum: [confirmed, strong, probable, possible, contextual, unknown]
+        policyVersion:
+          type: string
+          enum: [service-impact-v1]
+        supportingEvidenceIds:
+          $ref: "#/components/schemas/HydraGuardEvidenceIds"
+        reasons:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        complete:
+          type: boolean
+        synthetic:
+          type: boolean
+
+    HydraGuardEvidenceFactAssessment:
+      type: object
+      additionalProperties: false
+      required: [status, evidenceIds, reason]
+      properties:
+        status:
+          type: string
+          enum: [proven, not-proven, unknown]
+        evidenceIds:
+          $ref: "#/components/schemas/HydraGuardEvidenceIds"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+
+    HydraGuardPathImpactAssessment:
+      type: object
+      additionalProperties: false
+      required: [pathKey, stage, conclusion, confidence, evidenceIds, missingEvidenceIds, uncertainties]
+      properties:
+        pathKey:
+          type: string
+          minLength: 1
+          maxLength: 32768
+        stage:
+          type: string
+          enum: [candidate, semver-eligible, resolved, built, deployed, runtime-reachable, execution-observed]
+        conclusion:
+          type: string
+          enum: [candidate, affected, exposed, reachable, executed]
+        confidence:
+          $ref: "#/components/schemas/HydraGuardConfidenceAssessment"
+        evidenceIds:
+          $ref: "#/components/schemas/HydraGuardEvidenceIds"
+        missingEvidenceIds:
+          $ref: "#/components/schemas/HydraGuardEvidenceIds"
+        uncertainties:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+
+    HydraGuardImpactAffectedVersion:
+      type: object
+      additionalProperties: false
+      required: [id, packageName, version]
+      properties:
+        id:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        packageName:
+          type: string
+          minLength: 1
+          maxLength: 512
+        version:
+          type: string
+          minLength: 1
+          maxLength: 256
+
+    HydraGuardServiceSelectionAssessment:
+      type: object
+      additionalProperties: false
+      required: [state, dependencyTypes, declaredRanges, lockfilePaths, resolvedVersions, reason]
+      properties:
+        state:
+          type: string
+          enum: [exactly-resolved, unknown]
+        dependencyTypes:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            enum: [production, development, optional, peer]
+        declaredRanges:
+          type: array
+          maxItems: 10000
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 1024
+        lockfilePaths:
+          type: array
+          maxItems: 10000
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 4096
+        resolvedVersions:
+          type: array
+          maxItems: 5000
+          items:
+            $ref: "#/components/schemas/HydraGuardImpactAffectedVersion"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+
+    HydraGuardServiceImpact:
+      type: object
+      additionalProperties: false
+      required: [serviceId, stage, conclusion, confidence, summary, selection, temporal, build, deployment, runtime, authority, paths, evidenceIds, missingEvidence, warnings, complete, synthetic]
+      properties:
+        serviceId:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        stage:
+          type: string
+          enum: [candidate, semver-eligible, resolved, built, deployed, runtime-reachable, execution-observed]
+        conclusion:
+          type: string
+          enum: [candidate, affected, exposed, reachable, executed]
+        confidence:
+          $ref: "#/components/schemas/HydraGuardConfidenceAssessment"
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        selection:
+          $ref: "#/components/schemas/HydraGuardServiceSelectionAssessment"
+        temporal:
+          type: object
+          additionalProperties: false
+          required: [status, asOf, reason]
+          properties:
+            status:
+              type: string
+              enum: [unknown]
+            asOf:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 2048
+        build:
+          $ref: "#/components/schemas/HydraGuardEvidenceFactAssessment"
+        deployment:
+          $ref: "#/components/schemas/HydraGuardEvidenceFactAssessment"
+        runtime:
+          $ref: "#/components/schemas/HydraGuardEvidenceFactAssessment"
+        authority:
+          $ref: "#/components/schemas/HydraGuardEvidenceFactAssessment"
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/HydraGuardPathImpactAssessment"
+        evidenceIds:
+          $ref: "#/components/schemas/HydraGuardEvidenceIds"
+        missingEvidence:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        warnings:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        complete:
+          type: boolean
+        synthetic:
+          type: boolean
+
     HydraGuardBlastRadiusResponse:
       type: object
       additionalProperties: false
@@ -498,6 +1313,7 @@ components:
         - incidentId
         - executionMs
         - services
+        - serviceImpacts
         - totalPathCount
         - truncated
         - limits
@@ -532,6 +1348,11 @@ components:
               pathCount:
                 type: integer
                 minimum: 0
+        serviceImpacts:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/HydraGuardServiceImpact"
         totalPathCount:
           type: integer
           minimum: 0

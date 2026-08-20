@@ -48,7 +48,7 @@ export interface IngestionRoutesOptions {
     IngestionWorkerDependencies;
 }
 
-interface CreateAndDispatchInput {
+export interface CreateAndDispatchInput {
   readonly kind:
     IngestionKind;
 
@@ -103,7 +103,7 @@ function failUndispatchedJob(
   }
 }
 
-function createAndDispatch(
+export function createAndDispatch(
   options: IngestionRoutesOptions,
   input: CreateAndDispatchInput,
 ) {

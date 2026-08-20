@@ -1,27 +1,52 @@
-import type { ServiceCandidate, BlastRadiusPath, EvidenceCatalogEntry } from '../lib/api-types';
+import type {
+  ServiceCandidate,
+  BlastRadiusPath,
+  EvidenceCatalogEntry,
+  ServiceImpactExplanation,
+} from '../lib/api-types';
 import { EvidenceLedger } from './EvidenceLedger';
 
 interface WhyAffectedPanelProps {
   service: ServiceCandidate;
+  impact: ServiceImpactExplanation;
   selectedPath: BlastRadiusPath | null;
   evidenceCatalog: readonly EvidenceCatalogEntry[];
-  highConfidenceThreshold: number;
   onSelectPath: (pathKey: string) => void;
 }
 
+const confidenceBadgeTone: Record<ServiceImpactExplanation['confidence']['level'], string> = {
+  confirmed: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  strong: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  probable: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  possible: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  contextual: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+  unknown: 'border-gray-600 bg-gray-700/50 text-gray-300',
+};
+
 export function WhyAffectedPanel({
   service,
+  impact,
   selectedPath,
   evidenceCatalog,
-  highConfidenceThreshold,
   onSelectPath,
 }: WhyAffectedPanelProps) {
+  const selectedPathAssessment = selectedPath === null
+    ? null
+    : impact.paths.find((assessment) => assessment.pathKey === selectedPath.pathKey) ?? null;
+
   return (
     <aside className="flex h-full flex-col bg-hydra-surface" aria-label={`Evidence for ${service.service.name}`}>
       <div className="border-b border-hydra-border bg-hydra-bg/50 p-4">
-        <h2 className="mb-1 text-xs font-semibold tracking-wider text-gray-500">WHY IS THIS A CANDIDATE?</h2>
+        <h2 className="mb-1 text-xs font-semibold tracking-wider text-gray-500">WHY IS THIS SERVICE {impact.conclusion.toUpperCase()}?</h2>
         <div className="break-words text-lg font-semibold text-gray-100">{service.service.name}</div>
-        <div className="mt-2 flex flex-wrap gap-2">
+        <p className="mt-2 text-xs leading-relaxed text-gray-400">{impact.summary}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-xs font-medium text-cyan-300">
+            Stage: {impact.stage.replace(/-/g, ' ')}
+          </span>
+          <span className={`rounded border px-2 py-0.5 text-xs font-medium ${confidenceBadgeTone[impact.confidence.level]}`}>
+            Confidence: {impact.confidence.level}
+          </span>
           <span className={`rounded border px-2 py-0.5 text-xs font-medium ${
             service.service.criticality === 'critical' ? 'border-red-500/20 bg-red-500/10 text-red-400' :
             service.service.criticality === 'high' ? 'border-orange-500/20 bg-orange-500/10 text-orange-400' :
@@ -68,7 +93,7 @@ export function WhyAffectedPanel({
           })}
         </div>
 
-        {selectedPath && (
+        {selectedPath && selectedPathAssessment && (
           <div>
             <h3 className="mb-3 text-sm font-semibold tracking-wider text-gray-400">CANONICAL DEPENDENCY PROOF</h3>
             <div className="relative space-y-4 border-l-2 border-hydra-border pl-4">
@@ -94,8 +119,8 @@ export function WhyAffectedPanel({
 
             <EvidenceLedger
               path={selectedPath}
+              assessment={selectedPathAssessment}
               evidenceCatalog={evidenceCatalog}
-              highConfidenceThreshold={highConfidenceThreshold}
             />
           </div>
         )}

@@ -19,6 +19,8 @@ export type EvidenceSourceType =
   | 'sigstore'
   | 'runtime-telemetry'
   | 'security-advisory'
+  | 'typosquat-detector'
+  | 'analyst-review'
   | 'synthetic-fixture'
   | 'other';
 
@@ -105,6 +107,94 @@ export interface ServiceCandidate {
   readonly service: ServiceNode;
   readonly minimumDepth: number;
   readonly paths: readonly BlastRadiusPath[];
+}
+
+// ─── Backend impact decisions ───────────────────────────────────
+
+export type ExposureStage =
+  | 'candidate'
+  | 'semver-eligible'
+  | 'resolved'
+  | 'built'
+  | 'deployed'
+  | 'runtime-reachable'
+  | 'execution-observed';
+
+export type SecurityConclusion =
+  | 'candidate'
+  | 'affected'
+  | 'exposed'
+  | 'reachable'
+  | 'executed';
+
+export type EvidenceConfidenceLevel =
+  | 'confirmed'
+  | 'strong'
+  | 'probable'
+  | 'possible'
+  | 'contextual'
+  | 'unknown';
+
+export interface ConfidenceAssessment {
+  readonly level: EvidenceConfidenceLevel;
+  readonly policyVersion: 'service-impact-v1';
+  readonly supportingEvidenceIds: readonly NodeId[];
+  readonly reasons: readonly string[];
+  readonly complete: boolean;
+  readonly synthetic: boolean;
+}
+
+export interface EvidenceFactAssessment {
+  readonly status: 'proven' | 'not-proven' | 'unknown';
+  readonly evidenceIds: readonly NodeId[];
+  readonly reason: string;
+}
+
+export interface PathImpactAssessment {
+  readonly pathKey: string;
+  readonly stage: ExposureStage;
+  readonly conclusion: SecurityConclusion;
+  readonly confidence: ConfidenceAssessment;
+  readonly evidenceIds: readonly NodeId[];
+  readonly missingEvidenceIds: readonly NodeId[];
+  readonly uncertainties: readonly string[];
+}
+
+export interface ImpactAffectedVersion {
+  readonly id: NodeId;
+  readonly packageName: string;
+  readonly version: string;
+}
+
+export interface ServiceImpactExplanation {
+  readonly serviceId: NodeId;
+  readonly stage: ExposureStage;
+  readonly conclusion: SecurityConclusion;
+  readonly confidence: ConfidenceAssessment;
+  readonly summary: string;
+  readonly selection: {
+    readonly state: 'exactly-resolved' | 'unknown';
+    readonly dependencyTypes: readonly DependencyType[];
+    readonly declaredRanges: readonly string[];
+    readonly lockfilePaths: readonly string[];
+    readonly resolvedVersions: readonly ImpactAffectedVersion[];
+    readonly reason: string;
+  };
+  readonly temporal: {
+    readonly status: 'unknown';
+    readonly asOf: UnixEpochMilliseconds;
+    readonly reason: string;
+  };
+  readonly build: EvidenceFactAssessment;
+  readonly deployment: EvidenceFactAssessment;
+  readonly runtime: EvidenceFactAssessment;
+  readonly authority: EvidenceFactAssessment;
+  readonly paths: readonly PathImpactAssessment[];
+  readonly evidenceIds: readonly NodeId[];
+  readonly missingEvidence: readonly string[];
+  readonly warnings: readonly string[];
+  readonly complete: boolean;
+  readonly synthetic: boolean;
 }
 
 // ─── Analysis limits ─────────────────────────────────────────────
@@ -230,6 +320,7 @@ export interface LiveBlastRadiusResponse {
   readonly incident: IncidentSummary;
   readonly affectedVersions: readonly AffectedVersionSummary[];
   readonly evidenceCatalog: readonly EvidenceCatalogEntry[];
+  readonly serviceImpacts: readonly ServiceImpactExplanation[];
   readonly affectedVersionLookup: AffectedVersionLookup;
   readonly affectedVersionIds: readonly NodeId[];
   readonly services: readonly ServiceCandidate[];
@@ -239,4 +330,100 @@ export interface LiveBlastRadiusResponse {
   readonly warnings: readonly AnalysisWarning[];
   readonly evidenceFunnel: EvidenceFunnel;
   readonly hydraRead: HydraReadTelemetry;
+}
+
+// ─── Typosquatting findings ─────────────────────────────────────
+
+export type TyposquattingFindingStatus =
+  | 'candidate'
+  | 'suspicious'
+  | 'high-confidence'
+  | 'confirmed'
+  | 'dismissed';
+
+export type TyposquattingTransformation =
+  | 'adjacent-transposition'
+  | 'insertion'
+  | 'deletion'
+  | 'substitution'
+  | 'separator-variation'
+  | 'repeated-character'
+  | 'scope-impersonation'
+  | 'unicode-confusable'
+  | 'prefix-suffix';
+
+export interface TyposquattingFindingSummary {
+  readonly findingId: NodeId;
+  readonly status: TyposquattingFindingStatus;
+  readonly score: number;
+  readonly scoreMeaning: 'heuristic-ranking-not-probability';
+  readonly candidateName: string;
+  readonly targetName: string;
+  readonly summary: string;
+  readonly transformations: readonly TyposquattingTransformation[];
+  readonly reasonCodes: readonly string[];
+  readonly detectedAt: UnixEpochMilliseconds;
+  readonly decidedAt?: UnixEpochMilliseconds;
+  readonly decisionReason?: string;
+  readonly synthetic: boolean;
+}
+
+export interface TyposquattingFindingListResponse {
+  readonly findings: readonly TyposquattingFindingSummary[];
+  readonly truncated: boolean;
+  readonly nextCursor?: {
+    readonly detectedAt: UnixEpochMilliseconds;
+    readonly findingId: NodeId;
+  };
+}
+
+export interface TyposquattingEvidenceSummary {
+  readonly id: NodeId;
+  readonly sourceType: EvidenceSourceType | 'typosquat-detector' | 'analyst-review';
+  readonly confidence: number;
+  readonly observedAt: UnixEpochMilliseconds;
+  readonly synthetic: boolean;
+}
+
+export interface TyposquattingExposureService {
+  readonly serviceId: NodeId;
+  readonly serviceLogicalId: string;
+  readonly serviceName: string;
+  readonly serviceCriticality: ServiceCriticality;
+  readonly packageVersionIds: readonly NodeId[];
+  readonly evidenceIds: readonly NodeId[];
+}
+
+export interface TyposquattingFindingDetailResponse {
+  readonly finding: TyposquattingFindingSummary;
+  readonly candidatePackageId: NodeId;
+  readonly targetPackageId: NodeId;
+  readonly evidence: readonly TyposquattingEvidenceSummary[];
+  readonly exactVersions: readonly {
+    readonly id: NodeId;
+    readonly version: string;
+    readonly synthetic: boolean;
+  }[];
+  readonly versionLookup: {
+    readonly scannedCount: number;
+    readonly truncated: boolean;
+  };
+  readonly exposure: {
+    readonly services: readonly TyposquattingExposureService[];
+    readonly truncated: boolean;
+    readonly traversalStates: number;
+    readonly limits: {
+      readonly maxDepth: number;
+      readonly maxServices: number;
+      readonly maxTraversalStates: number;
+      readonly maxDependentsPerNode: number;
+    };
+  };
+  readonly incidentIds: readonly NodeId[];
+}
+
+export interface TyposquattingReviewResponse {
+  readonly finding: TyposquattingFindingSummary;
+  readonly incidentId?: NodeId;
+  readonly replayed: boolean;
 }

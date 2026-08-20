@@ -73,6 +73,7 @@ export const NODE_LABEL_BY_KIND = {
   Incident: "Incident",
   Evidence: "Evidence",
   Control: "Control",
+  Finding: "Finding",
 } as const satisfies Record<NodeKind, NodeKind>;
 
 export const EDGE_TYPE_BY_KIND = {
@@ -93,6 +94,8 @@ export const EDGE_TYPE_BY_KIND = {
   AFFECTS: "AFFECTS",
   SUPPORTS: "SUPPORTS",
   TARGETS: "TARGETS",
+  LOOKALIKE_OF: "LOOKALIKE_OF",
+  IMITATES: "IMITATES",
   USED_BY: "USED_BY",
 } as const satisfies Record<GraphRelKind, GraphRelKind>;
 
@@ -210,6 +213,27 @@ export const NODE_PROPERTY_KEYS = {
     "has_estimated_minutes",
     "reversible",
   ],
+  Finding: [
+    ...BASE_NODE_PROPERTIES,
+    "finding_type",
+    "status",
+    "score",
+    "detector_version",
+    "policy_version",
+    "corpus_id",
+    "comparison_version",
+    "index_version",
+    "candidate_package_name",
+    "target_package_name",
+    "summary",
+    "transformations_json",
+    "reason_codes_json",
+    "detected_at",
+    "decided_at",
+    "has_decided_at",
+    "decision_reason",
+    "has_decision_reason",
+  ],
 } as const satisfies Record<NodeKind, readonly string[]>;
 
 const CANONICAL_EDGE_PROPERTIES = [
@@ -242,6 +266,14 @@ const DEPENDENCY_EDGE_PROPERTIES = [
   "has_lockfile_path",
   "integrity",
   "has_integrity",
+] as const;
+
+const LOOKALIKE_EDGE_PROPERTIES = [
+  ...CANONICAL_EDGE_PROPERTIES,
+  "algorithm",
+  "comparison_version",
+  "normalized_distance",
+  "transformations_json",
 ] as const;
 
 const DERIVED_EDGE_PROPERTIES = [
@@ -277,8 +309,75 @@ export const EDGE_PROPERTY_KEYS = {
   AFFECTS: CANONICAL_EDGE_PROPERTIES,
   SUPPORTS: CANONICAL_EDGE_PROPERTIES,
   TARGETS: CANONICAL_EDGE_PROPERTIES,
+  LOOKALIKE_OF: LOOKALIKE_EDGE_PROPERTIES,
+  IMITATES: CANONICAL_EDGE_PROPERTIES,
   USED_BY: DERIVED_EDGE_PROPERTIES,
 } as const satisfies Record<GraphRelKind, readonly string[]>;
+
+const FINDING_STATUSES = [
+  "candidate",
+  "suspicious",
+  "high-confidence",
+  "confirmed",
+  "dismissed",
+] as const;
+
+const TRANSFORMATION_KINDS = [
+  "adjacent-transposition",
+  "insertion",
+  "deletion",
+  "substitution",
+  "separator-variation",
+  "repeated-character",
+  "scope-impersonation",
+  "unicode-confusable",
+  "prefix-suffix",
+] as const;
+
+const EVIDENCE_SOURCE_TYPES = [
+  "npm-registry",
+  "package-manifest",
+  "package-lock",
+  "git-commit",
+  "cyclonedx",
+  "spdx",
+  "slsa",
+  "sigstore",
+  "runtime-telemetry",
+  "security-advisory",
+  "typosquat-detector",
+  "analyst-review",
+  "synthetic-fixture",
+  "other",
+] as const;
+
+const NPM_ECOSYSTEM = ["npm"] as const;
+const REPOSITORY_PROVIDERS = ["github", "gitlab", "other"] as const;
+const SERVICE_CRITICALITIES = ["low", "medium", "high", "critical"] as const;
+const CREDENTIAL_TYPES = [
+  "npm-token",
+  "github-token",
+  "oidc",
+  "signing-key",
+  "other",
+] as const;
+const CREDENTIAL_STATUSES = ["active", "expired", "revoked", "unknown"] as const;
+const CI_WORKFLOW_PROVIDERS = ["github-actions", "gitlab-ci", "other"] as const;
+const INCIDENT_STATUSES = ["draft", "active", "contained", "closed"] as const;
+const CONTROL_ACTIONS = [
+  "block-package-version",
+  "pin-dependency",
+  "apply-override",
+  "revoke-credential",
+  "remove-publishing-access",
+  "disable-workflow",
+  "rotate-secret",
+  "rollback-artifact",
+  "isolate-service",
+  "restrict-network",
+] as const;
+const CONTROL_STATUSES = ["proposed", "simulated", "approved", "applied"] as const;
+const DEPENDENCY_TYPES = ["production", "development", "optional", "peer"] as const;
 
 function fail(message: string): never {
   throw new Error(`HydraDB serialization failed: ${message}`);
@@ -301,6 +400,27 @@ function assertTimestamp(value: number, field: string): void {
 function assertFiniteNonnegative(value: number, field: string): void {
   if (!Number.isFinite(value) || value < 0) {
     fail(`${field} must be finite and nonnegative`);
+  }
+}
+
+function assertFiniteRange(
+  value: number,
+  minimum: number,
+  maximum: number,
+  field: string,
+): void {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    fail(`${field} must be between ${minimum} and ${maximum}`);
+  }
+}
+
+function assertEnum(
+  value: string,
+  allowedValues: readonly string[],
+  field: string,
+): void {
+  if (!allowedValues.includes(value)) {
+    fail(`${field} contains an unsupported enum value`);
   }
 }
 
@@ -340,7 +460,12 @@ function encodeIdSet(
 function encodeStringSet(
   values: readonly string[],
   field: string,
+  requireNonempty = false,
 ): string {
+  if (requireNonempty && values.length === 0) {
+    fail(`${field} must not be empty`);
+  }
+
   const sorted = [...values].sort((left, right) =>
     left.localeCompare(right),
   );
@@ -354,6 +479,20 @@ function encodeStringSet(
   }
 
   return JSON.stringify(sorted);
+}
+
+function encodeEnumSet(
+  values: readonly string[],
+  allowedValues: readonly string[],
+  field: string,
+): string {
+  const encoded = encodeStringSet(values, field, true);
+
+  for (const value of values) {
+    assertEnum(value, allowedValues, field);
+  }
+
+  return encoded;
 }
 
 /**
@@ -429,6 +568,7 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
 
   switch (node.kind) {
     case "Package":
+      assertEnum(node.ecosystem, NPM_ECOSYSTEM, "Package.ecosystem");
       assertText(node.name, "Package.name");
       specific = {
         ecosystem: node.ecosystem,
@@ -437,6 +577,11 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       break;
 
     case "PackageVersion":
+      assertEnum(
+        node.ecosystem,
+        NPM_ECOSYSTEM,
+        "PackageVersion.ecosystem",
+      );
       assertText(node.packageName, "PackageVersion.packageName");
       assertText(node.version, "PackageVersion.version");
 
@@ -457,6 +602,11 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       break;
 
     case "Repository":
+      assertEnum(
+        node.provider,
+        REPOSITORY_PROVIDERS,
+        "Repository.provider",
+      );
       assertText(node.url, "Repository.url");
 
       if (node.defaultBranch !== undefined) {
@@ -473,6 +623,20 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
 
     case "Service":
       assertText(node.name, "Service.name");
+      assertEnum(
+        node.criticality,
+        SERVICE_CRITICALITIES,
+        "Service.criticality",
+      );
+
+      if (node.dataSensitivity !== undefined) {
+        assertEnum(
+          node.dataSensitivity,
+          SERVICE_CRITICALITIES,
+          "Service.dataSensitivity",
+        );
+      }
+
       specific = {
         name: node.name,
         criticality: node.criticality,
@@ -545,6 +709,13 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       break;
 
     case "Credential":
+      assertEnum(
+        node.credentialType,
+        CREDENTIAL_TYPES,
+        "Credential.credentialType",
+      );
+      assertEnum(node.status, CREDENTIAL_STATUSES, "Credential.status");
+
       if (node.expiresAt !== undefined) {
         assertTimestamp(node.expiresAt, "Credential.expiresAt");
       }
@@ -562,6 +733,11 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       break;
 
     case "CIWorkflow":
+      assertEnum(
+        node.provider,
+        CI_WORKFLOW_PROVIDERS,
+        "CIWorkflow.provider",
+      );
       assertText(node.path, "CIWorkflow.path");
       specific = {
         provider: node.provider,
@@ -585,6 +761,7 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
 
     case "Incident":
       assertText(node.title, "Incident.title");
+      assertEnum(node.status, INCIDENT_STATUSES, "Incident.status");
       assertTimestamp(
         node.intervalStart,
         "Incident.intervalStart",
@@ -609,6 +786,11 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
 
     case "Evidence":
       assertText(node.sourceUri, "Evidence.sourceUri");
+      assertEnum(
+        node.sourceType,
+        EVIDENCE_SOURCE_TYPES,
+        "Evidence.sourceType",
+      );
       assertText(
         node.collectorVersion,
         "Evidence.collectorVersion",
@@ -638,6 +820,9 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       break;
 
     case "Control":
+      assertEnum(node.action, CONTROL_ACTIONS, "Control.action");
+      assertEnum(node.status, CONTROL_STATUSES, "Control.status");
+
       if (node.estimatedCost !== undefined) {
         assertFiniteNonnegative(
           node.estimatedCost,
@@ -663,6 +848,70 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
         reversible: node.reversible,
       };
       break;
+
+    case "Finding": {
+      if (node.findingType !== "typosquatting") {
+        fail("Finding.findingType must be typosquatting");
+      }
+
+      assertEnum(node.status, FINDING_STATUSES, "Finding.status");
+      assertFiniteRange(node.score, 0, 100, "Finding.score");
+      assertText(node.detectorVersion, "Finding.detectorVersion");
+      assertText(node.policyVersion, "Finding.policyVersion");
+      assertText(node.corpusId, "Finding.corpusId");
+      assertText(node.comparisonVersion, "Finding.comparisonVersion");
+      assertText(node.indexVersion, "Finding.indexVersion");
+      assertText(node.candidatePackageName, "Finding.candidatePackageName");
+      assertText(node.targetPackageName, "Finding.targetPackageName");
+      assertText(node.summary, "Finding.summary");
+      assertTimestamp(node.detectedAt, "Finding.detectedAt");
+
+      const terminal = node.status === "confirmed" || node.status === "dismissed";
+      const hasDecidedAt = node.decidedAt !== undefined;
+      const hasDecisionReason = node.decisionReason !== undefined;
+
+      if (terminal !== hasDecidedAt || terminal !== hasDecisionReason) {
+        fail("Finding decision fields do not match its status");
+      }
+
+      if (node.decidedAt !== undefined) {
+        assertTimestamp(node.decidedAt, "Finding.decidedAt");
+      }
+
+      if (node.decisionReason !== undefined) {
+        assertText(node.decisionReason, "Finding.decisionReason");
+      }
+
+      specific = {
+        finding_type: node.findingType,
+        status: node.status,
+        score: node.score,
+        detector_version: node.detectorVersion,
+        policy_version: node.policyVersion,
+        corpus_id: node.corpusId,
+        comparison_version: node.comparisonVersion,
+        index_version: node.indexVersion,
+        candidate_package_name: node.candidatePackageName,
+        target_package_name: node.targetPackageName,
+        summary: node.summary,
+        transformations_json: encodeEnumSet(
+          node.transformations,
+          TRANSFORMATION_KINDS,
+          "Finding.transformations",
+        ),
+        reason_codes_json: encodeStringSet(
+          node.reasonCodes,
+          "Finding.reasonCodes",
+          true,
+        ),
+        detected_at: node.detectedAt,
+        decided_at: node.decidedAt ?? 0,
+        has_decided_at: hasDecidedAt,
+        decision_reason: node.decisionReason ?? "",
+        has_decision_reason: hasDecisionReason,
+      };
+      break;
+    }
 
     default:
       return assertNever(node);
@@ -701,6 +950,11 @@ function serializeCanonicalEdgeProperties(
         edge.declaredRange,
         "DECLARES_DEPENDENCY.declaredRange",
       );
+      assertEnum(
+        edge.dependencyType,
+        DEPENDENCY_TYPES,
+        "DECLARES_DEPENDENCY.dependencyType",
+      );
 
       return finalizeProperties(
         EDGE_PROPERTY_KEYS.DECLARES_DEPENDENCY,
@@ -715,6 +969,12 @@ function serializeCanonicalEdgeProperties(
       );
 
     case "DEPENDS_ON":
+      assertEnum(
+        edge.dependencyType,
+        DEPENDENCY_TYPES,
+        "DEPENDS_ON.dependencyType",
+      );
+
       return finalizeProperties(
         EDGE_PROPERTY_KEYS.DEPENDS_ON,
         {
@@ -728,6 +988,38 @@ function serializeCanonicalEdgeProperties(
             edge.lockfilePath !== undefined,
           integrity: edge.integrity ?? "",
           has_integrity: edge.integrity !== undefined,
+        },
+      );
+
+    case "LOOKALIKE_OF":
+      if (edge.sourceId === edge.targetId) {
+        fail("LOOKALIKE_OF endpoints must be distinct");
+      }
+
+      assertText(edge.algorithm, "LOOKALIKE_OF.algorithm");
+      assertText(
+        edge.comparisonVersion,
+        "LOOKALIKE_OF.comparisonVersion",
+      );
+      assertFiniteRange(
+        edge.normalizedDistance,
+        0,
+        1,
+        "LOOKALIKE_OF.normalizedDistance",
+      );
+
+      return finalizeProperties(
+        EDGE_PROPERTY_KEYS.LOOKALIKE_OF,
+        {
+          ...base,
+          algorithm: edge.algorithm,
+          comparison_version: edge.comparisonVersion,
+          normalized_distance: edge.normalizedDistance,
+          transformations_json: encodeEnumSet(
+            edge.transformations,
+            TRANSFORMATION_KINDS,
+            "LOOKALIKE_OF.transformations",
+          ),
         },
       );
 

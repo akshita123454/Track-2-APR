@@ -29,6 +29,10 @@ import type {
 } from "../../db/persistence-service.js";
 
 import type {
+  TyposquattingService,
+} from "../../typosquatting/service.js";
+
+import type {
   LockfileIngestionRequestBody,
   NpmIngestionRequestBody,
 } from "../schemas/ingestions.js";
@@ -74,6 +78,16 @@ export interface IngestionWorkerDependencies {
   readonly persistence: Pick<
     HydraPersistenceService,
     "persist"
+  >;
+
+  /**
+   * Optional post-persistence scanner. The production server supplies this;
+   * keeping the seam optional preserves focused ingestion worker fixtures.
+   * It runs only after the lockfile graph has been verified.
+   */
+  readonly typosquatting?: Pick<
+    TyposquattingService,
+    "scanLockfile"
   >;
 
   /**
@@ -558,6 +572,50 @@ export function createLockfileIngestionWorker(
         context,
         batch,
       );
+
+      /*
+       * Detection is deliberately downstream of verified lockfile
+       * persistence. It consumes only collector-owned metadata and graph
+       * facts; it never installs or executes package code. Finding writes use
+       * a separate deterministic idempotency suffix, so retries cannot alter
+       * the already-verified dependency batch.
+       */
+      if (
+        dependencies.typosquatting !==
+        undefined
+      ) {
+        throwIfAborted(context.signal);
+
+        try {
+          await dependencies
+            .typosquatting
+            .scanLockfile({
+              collected,
+              observedAt,
+              persistenceIdempotencyKey:
+                context
+                  .persistenceIdempotencyKey,
+              correlationId:
+                context.correlationId,
+            });
+        } catch (error: unknown) {
+          partiallyCompleteJob(
+            dependencies,
+            context,
+            batch,
+            [
+              "TYPOSQUATTING_SCAN_FAILED",
+              ...(collected.issues.length > 0
+                ? [
+                    "PARTIAL_COLLECTION" as const,
+                  ]
+                : []),
+            ],
+          );
+
+          return;
+        }
+      }
 
       /*
        * Nonfatal parser issues mean the verified graph is useful but the

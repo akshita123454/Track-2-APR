@@ -223,6 +223,57 @@ throw new Error(
 );
 }
 
+  const serviceIds = new Set(
+    result.services.map(
+      (candidate) => candidate.service.id,
+    ),
+  );
+
+  const impactServiceIds = new Set(
+    result.serviceImpacts.map(
+      (impact) => impact.serviceId,
+    ),
+  );
+
+  if (
+    serviceIds.size !==
+      impactServiceIds.size ||
+    [...serviceIds].some(
+      (serviceId) =>
+        !impactServiceIds.has(serviceId),
+    )
+  ) {
+    throw new Error(
+      "Live analysis returned inconsistent service-impact decisions",
+    );
+  }
+
+  for (const impact of result.serviceImpacts) {
+    const candidate = result.services.find(
+      (item) =>
+        item.service.id === impact.serviceId,
+    );
+
+    const candidatePathKeys = new Set(
+      candidate?.paths.map(
+        (path) => path.pathKey,
+      ) ?? [],
+    );
+
+    if (
+      impact.paths.length !==
+        candidatePathKeys.size ||
+      impact.paths.some(
+        (path) =>
+          !candidatePathKeys.has(path.pathKey),
+      )
+    ) {
+      throw new Error(
+        "Live analysis returned inconsistent path-impact decisions",
+      );
+    }
+  }
+
   const stages =
     result.evidenceFunnel.stages;
 

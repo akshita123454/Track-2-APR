@@ -87,6 +87,18 @@ interface StoreOptions {
 
   readonly missingCanonicalEdgeIds?:
     ReadonlySet<number>;
+
+  readonly evidenceSourceTypeOverride?:
+    EvidenceNode["sourceType"];
+
+  readonly evidenceConfidenceOverride?:
+    number;
+
+  readonly additionalEvidenceNodes?:
+    readonly EvidenceNode[];
+
+  readonly additionalDependencyEvidenceIds?:
+    readonly number[];
 }
 
 const OBSERVED_AT =
@@ -435,6 +447,25 @@ function createFixture(
 
     nodes.push(secondVersion);
 
+    const secondDependencyPair =
+      createDependencyPair({
+        source: service,
+        target: secondVersion,
+        discriminator:
+          "package-lock:payments-api>poisoned-demo-lib-secondary",
+        dependencyType:
+          "production",
+        evidenceIds: [
+          evidence.id,
+        ],
+        observedAt: OBSERVED_AT,
+        generatorVersion:
+          "live-analysis-smoke-v1",
+        declaredRange: "^1.2.0",
+        lockfilePath:
+          "node_modules/poisoned-demo-lib",
+      });
+
     edges.push(
       createAffectsEdge(
         incident,
@@ -442,6 +473,8 @@ function createFixture(
         evidence.id,
         "synthetic-advisory-secondary",
       ),
+      secondDependencyPair.canonical,
+      secondDependencyPair.reverseIndex,
     );
   }
 
@@ -476,8 +509,53 @@ class FakeHydraReadStore {
       StoreOptions = {},
   ) {
     for (const node of fixture.nodes) {
+      const sourceNode =
+        node.kind === "Evidence" &&
+        (this.options
+          .evidenceSourceTypeOverride !==
+          undefined ||
+          this.options
+            .evidenceConfidenceOverride !==
+            undefined)
+          ? {
+              ...node,
+              ...(this.options
+                .evidenceSourceTypeOverride ===
+                undefined
+                ? {}
+                : {
+                    sourceType:
+                      this.options
+                        .evidenceSourceTypeOverride,
+                  }),
+              ...(this.options
+                .evidenceConfidenceOverride ===
+                undefined
+                ? {}
+                : {
+                    confidence:
+                      this.options
+                        .evidenceConfidenceOverride,
+                  }),
+            }
+          : node;
+
       const row =
-        serializeHydraNode(node);
+        serializeHydraNode(sourceNode);
+
+      this.nodeRows.set(
+        row.vertex,
+        row,
+      );
+    }
+
+    for (
+      const evidence of
+      this.options.additionalEvidenceNodes ??
+        []
+    ) {
+      const row =
+        serializeHydraNode(evidence);
 
       this.nodeRows.set(
         row.vertex,
@@ -486,8 +564,29 @@ class FakeHydraReadStore {
     }
 
     for (const edge of fixture.edges) {
+      const additionalEvidenceIds =
+        edge.kind === "DEPENDS_ON" &&
+        edge.derived === false
+          ? this.options
+              .additionalDependencyEvidenceIds ??
+            []
+          : [];
+
+      const sourceEdge: GraphEdge =
+        edge.kind === "DEPENDS_ON" &&
+        edge.derived === false &&
+        additionalEvidenceIds.length > 0
+          ? {
+              ...edge,
+              evidenceIds: [
+                ...(edge.evidenceIds ?? []),
+                ...additionalEvidenceIds,
+              ],
+            }
+          : edge;
+
       const row =
-        serializeHydraEdge(edge);
+        serializeHydraEdge(sourceEdge);
 
       this.edgeRows.set(
         row.relationship_vertex,
@@ -1148,6 +1247,103 @@ async function verifySuccessfulLiveAnalysis(
     1,
   );
 
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.serviceId,
+    fixture.service.id,
+  );
+  assert.equal(
+    impact.stage,
+    "resolved",
+  );
+  assert.equal(
+    impact.conclusion,
+    "affected",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "strong",
+  );
+  assert.equal(
+    impact.confidence.policyVersion,
+    "service-impact-v1",
+  );
+  assert.equal(
+    impact.confidence.complete,
+    true,
+  );
+  assert.equal(
+    impact.confidence.synthetic,
+    true,
+  );
+  assert.equal(
+    impact.selection.state,
+    "exactly-resolved",
+  );
+  assert.deepEqual(
+    impact.selection.dependencyTypes,
+    ["production"],
+  );
+  assert.deepEqual(
+    impact.selection.declaredRanges,
+    ["^1.2.0"],
+  );
+  assert.deepEqual(
+    impact.selection.lockfilePaths,
+    ["node_modules/poisoned-demo-lib"],
+  );
+  assert.deepEqual(
+    impact.selection.resolvedVersions,
+    [
+      {
+        id: fixture.affectedVersion.id,
+        packageName:
+          fixture.affectedVersion.packageName,
+        version:
+          fixture.affectedVersion.version,
+      },
+    ],
+  );
+  assert.equal(
+    impact.temporal.status,
+    "unknown",
+  );
+  assert.equal(
+    impact.temporal.asOf,
+    OBSERVED_AT,
+  );
+  assert.equal(
+    impact.build.status,
+    "not-proven",
+  );
+  assert.equal(
+    impact.deployment.status,
+    "not-proven",
+  );
+  assert.equal(
+    impact.runtime.status,
+    "not-proven",
+  );
+  assert.equal(
+    impact.authority.status,
+    "not-proven",
+  );
+  assert.equal(
+    impact.paths.length,
+    1,
+  );
+  assert.equal(
+    impact.paths[0]?.stage,
+    "resolved",
+  );
+  assert.equal(
+    impact.complete,
+    true,
+  );
+
   const path =
     candidate.paths[0];
 
@@ -1351,6 +1547,40 @@ async function verifyMissingEvidenceDoesNotCreateFalseClaims(
     false,
   );
 
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.stage,
+    "candidate",
+  );
+  assert.equal(
+    impact.conclusion,
+    "candidate",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "unknown",
+  );
+  assert.equal(
+    impact.confidence.complete,
+    false,
+  );
+  assert.equal(
+    impact.selection.state,
+    "unknown",
+  );
+  assert.equal(
+    impact.complete,
+    false,
+  );
+  assert.deepEqual(
+    impact.paths[0]
+      ?.missingEvidenceIds,
+    [fixture.evidence.id],
+  );
+
   const serialized =
     JSON.stringify(result);
 
@@ -1366,6 +1596,255 @@ async function verifyMissingEvidenceDoesNotCreateFalseClaims(
       '"conclusion":"compromised"',
     ),
     false,
+  );
+
+  assertSessionsClosed(store);
+}
+
+async function verifyContextualEvidenceRemainsCandidate(
+  fixture: Fixture,
+): Promise<void> {
+  const store =
+    new FakeHydraReadStore(
+      fixture,
+      {
+        evidenceSourceTypeOverride:
+          "npm-registry",
+      },
+    );
+
+  const result =
+    await runLiveBlastRadius(
+      {} as Driver,
+      fixture.incident.id,
+      {
+        reader: {
+          sessionFactory:
+            store.sessionFactory,
+        },
+
+        clock:
+          deterministicClock(
+            OBSERVED_AT,
+            COMPLETED_AT,
+          ),
+      },
+    );
+
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.stage,
+    "candidate",
+  );
+  assert.equal(
+    impact.conclusion,
+    "candidate",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "contextual",
+  );
+  assert.equal(
+    impact.confidence.complete,
+    true,
+  );
+  assert.equal(
+    impact.selection.state,
+    "unknown",
+  );
+  assert.equal(
+    impact.complete,
+    true,
+  );
+  assert.match(
+    impact.summary,
+    /structurally connected/,
+  );
+
+  assertSessionsClosed(store);
+}
+
+async function verifyContextualEvidenceCannotInflateExactConfidence(
+  fixture: Fixture,
+): Promise<void> {
+  const contextualIdentity =
+    createEntityIdentity(
+      "evidence:live-analysis-smoke:high-confidence-context",
+    );
+
+  const contextualEvidence: EvidenceNode = {
+    ...contextualIdentity,
+    kind: "Evidence",
+    evidenceIds: [],
+    synthetic: true,
+    observedAt: OBSERVED_AT,
+    sourceType: "npm-registry",
+    sourceUri:
+      "fixture://live-analysis/contextual-registry",
+    collectorVersion:
+      "live-analysis-smoke-v1",
+    confidence: 0.99,
+    detail:
+      "High-confidence contextual metadata that must not inflate exact-resolution confidence",
+    incidentId:
+      fixture.incident.id,
+  };
+
+  const store =
+    new FakeHydraReadStore(
+      fixture,
+      {
+        evidenceConfidenceOverride:
+          0.2,
+        additionalEvidenceNodes: [
+          contextualEvidence,
+        ],
+        additionalDependencyEvidenceIds: [
+          contextualEvidence.id,
+        ],
+      },
+    );
+
+  const result =
+    await runLiveBlastRadius(
+      {} as Driver,
+      fixture.incident.id,
+      {
+        reader: {
+          sessionFactory:
+            store.sessionFactory,
+        },
+
+        clock:
+          deterministicClock(
+            OBSERVED_AT,
+            COMPLETED_AT,
+          ),
+      },
+    );
+
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.stage,
+    "resolved",
+  );
+  assert.equal(
+    impact.conclusion,
+    "affected",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "probable",
+  );
+  assert.deepEqual(
+    impact.confidence
+      .supportingEvidenceIds,
+    [fixture.evidence.id],
+  );
+  assert.deepEqual(
+    impact.evidenceIds,
+    [
+      fixture.evidence.id,
+      contextualEvidence.id,
+    ].sort((left, right) => left - right),
+  );
+
+  assertSessionsClosed(store);
+}
+
+async function verifyPartialMissingEvidenceFailsClosed(
+  fixture: Fixture,
+): Promise<void> {
+  const missingEvidenceId =
+    createEntityIdentity(
+      "evidence:live-analysis-smoke:missing-lock-proof",
+    ).id;
+
+  const store =
+    new FakeHydraReadStore(
+      fixture,
+      {
+        additionalDependencyEvidenceIds:
+          [missingEvidenceId],
+      },
+    );
+
+  const result =
+    await runLiveBlastRadius(
+      {} as Driver,
+      fixture.incident.id,
+      {
+        reader: {
+          sessionFactory:
+            store.sessionFactory,
+        },
+
+        clock:
+          deterministicClock(
+            OBSERVED_AT,
+            COMPLETED_AT,
+          ),
+      },
+    );
+
+  assert.equal(
+    result.evidenceFunnel
+      .evidenceLookup
+      .complete,
+    false,
+  );
+  assert.deepEqual(
+    result.evidenceFunnel
+      .evidenceLookup
+      .missingEvidenceIds,
+    [missingEvidenceId],
+  );
+
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.stage,
+    "candidate",
+  );
+  assert.equal(
+    impact.conclusion,
+    "candidate",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "unknown",
+  );
+  assert.equal(
+    impact.confidence.complete,
+    false,
+  );
+  assert.equal(
+    impact.selection.state,
+    "unknown",
+  );
+  assert.equal(
+    impact.complete,
+    false,
+  );
+  assert.deepEqual(
+    impact.paths[0]
+      ?.missingEvidenceIds,
+    [missingEvidenceId],
+  );
+  assert.equal(
+    impact.paths[0]
+      ?.evidenceIds.includes(
+        fixture.evidence.id,
+      ),
+    true,
   );
 
   assertSessionsClosed(store);
@@ -1515,6 +1994,42 @@ async function verifyAffectedVersionLimitPlusOne(
     false,
   );
 
+  const impact =
+    result.serviceImpacts[0];
+
+  assert.ok(impact);
+  assert.equal(
+    impact.stage,
+    "candidate",
+  );
+  assert.equal(
+    impact.conclusion,
+    "candidate",
+  );
+  assert.equal(
+    impact.confidence.level,
+    "unknown",
+  );
+  assert.equal(
+    impact.confidence.complete,
+    false,
+  );
+  assert.equal(
+    impact.selection.state,
+    "unknown",
+  );
+  assert.equal(
+    impact.complete,
+    false,
+  );
+  assert.equal(
+    impact.warnings.some(
+      (warning) =>
+        warning.includes("truncated"),
+    ),
+    true,
+  );
+
   const affectedLookup =
     store.observations.find(
       (observation) =>
@@ -1548,6 +2063,18 @@ async function main(): Promise<void> {
     fixture,
   );
 
+  await verifyContextualEvidenceRemainsCandidate(
+    fixture,
+  );
+
+  await verifyContextualEvidenceCannotInflateExactConfidence(
+    fixture,
+  );
+
+  await verifyPartialMissingEvidenceFailsClosed(
+    fixture,
+  );
+
   await verifyPayloadTamperingFailsClosed(
     fixture,
   );
@@ -1575,7 +2102,7 @@ async function main(): Promise<void> {
   );
 
   console.log(
-    "- missing evidence did not create false exposure claims",
+    "- missing, partial, contextual-only, mixed-source, and truncated evidence obeyed fail-closed confidence policy",
   );
 
   console.log(

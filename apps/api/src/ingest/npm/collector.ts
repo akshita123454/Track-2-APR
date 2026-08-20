@@ -32,7 +32,7 @@ const COLLECTOR_VERSION = "0.1.0";
 
 type StandardRelationshipKind = Exclude<
   CanonicalRelKind,
-  "DECLARES_DEPENDENCY" | "DEPENDS_ON"
+  "DECLARES_DEPENDENCY" | "DEPENDS_ON" | "LOOKALIKE_OF"
 >;
 
 export interface CollectPackageOptions {

@@ -26,6 +26,38 @@ function isValidTimestamp(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
+const FINDING_STATUSES = new Set([
+  "candidate",
+  "suspicious",
+  "high-confidence",
+  "confirmed",
+  "dismissed",
+]);
+
+const TRANSFORMATION_KINDS = new Set([
+  "adjacent-transposition",
+  "insertion",
+  "deletion",
+  "substitution",
+  "separator-variation",
+  "repeated-character",
+  "scope-impersonation",
+  "unicode-confusable",
+  "prefix-suffix",
+]);
+
+function isNonemptyText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasValidTransformations(values: readonly string[]): boolean {
+  return (
+    values.length > 0 &&
+    new Set(values).size === values.length &&
+    values.every((value) => TRANSFORMATION_KINDS.has(value))
+  );
+}
+
 function hasAllowedEndpoints(
   relationship: CanonicalRelKind,
   sourceKind: NodeKind,
@@ -111,10 +143,19 @@ function hasAllowedEndpoints(
 
     case "TARGETS":
       return (
-        sourceKind === "Control" &&
-        targetKind !== "Evidence" &&
-        targetKind !== "Control"
+        (sourceKind === "Finding" && targetKind === "Package") ||
+        (
+          sourceKind === "Control" &&
+          targetKind !== "Evidence" &&
+          targetKind !== "Control"
+        )
       );
+
+    case "LOOKALIKE_OF":
+      return sourceKind === "Package" && targetKind === "Package";
+
+    case "IMITATES":
+      return sourceKind === "Finding" && targetKind === "Package";
   }
 }
 
@@ -326,6 +367,68 @@ export function validateGraph(
       nodeIdByLogicalId.set(node.logicalId, node.id);
     }
 
+    if (node.kind === "Finding") {
+      const requiredText = [
+        node.detectorVersion,
+        node.policyVersion,
+        node.corpusId,
+        node.comparisonVersion,
+        node.indexVersion,
+        node.candidatePackageName,
+        node.targetPackageName,
+        node.summary,
+      ];
+
+      if (node.findingType !== "typosquatting") {
+        errors.push(`Finding node ${node.id} has unsupported findingType`);
+      }
+
+      if (!FINDING_STATUSES.has(node.status)) {
+        errors.push(`Finding node ${node.id} has unsupported status`);
+      }
+
+      if (!Number.isFinite(node.score) || node.score < 0 || node.score > 100) {
+        errors.push(`Finding node ${node.id} score must be between 0 and 100`);
+      }
+
+      if (requiredText.some((value) => !isNonemptyText(value))) {
+        errors.push(`Finding node ${node.id} has an empty required property`);
+      }
+
+      if (!hasValidTransformations(node.transformations)) {
+        errors.push(`Finding node ${node.id} has invalid transformations`);
+      }
+
+      if (
+        node.reasonCodes.length === 0 ||
+        new Set(node.reasonCodes).size !== node.reasonCodes.length ||
+        node.reasonCodes.some((value) => !isNonemptyText(value))
+      ) {
+        errors.push(`Finding node ${node.id} has invalid reasonCodes`);
+      }
+
+      if (!isValidTimestamp(node.detectedAt)) {
+        errors.push(`Finding node ${node.id} has invalid detectedAt`);
+      }
+
+      const terminal = node.status === "confirmed" || node.status === "dismissed";
+      const hasDecision = node.decidedAt !== undefined && node.decisionReason !== undefined;
+
+      if (terminal && !hasDecision) {
+        errors.push(`Finding node ${node.id} terminal status requires decision fields`);
+      } else if (!terminal && (node.decidedAt !== undefined || node.decisionReason !== undefined)) {
+        errors.push(`Finding node ${node.id} nonterminal status cannot carry decision fields`);
+      }
+
+      if (node.decidedAt !== undefined && !isValidTimestamp(node.decidedAt)) {
+        errors.push(`Finding node ${node.id} has invalid decidedAt`);
+      }
+
+      if (node.decisionReason !== undefined && !isNonemptyText(node.decisionReason)) {
+        errors.push(`Finding node ${node.id} has invalid decisionReason`);
+      }
+    }
+
     if (node.kind === "Evidence") {
       if (node.evidenceIds.length !== 0) {
         errors.push(
@@ -449,6 +552,32 @@ export function validateGraph(
       nodesById,
       errors,
     );
+
+    if (
+      edge.kind === "LOOKALIKE_OF" &&
+      source !== undefined &&
+      target !== undefined
+    ) {
+      if (edge.sourceId === edge.targetId) {
+        errors.push(`LOOKALIKE_OF edge ${edge.id} must connect distinct packages`);
+      }
+
+      if (!isNonemptyText(edge.algorithm) || !isNonemptyText(edge.comparisonVersion)) {
+        errors.push(`LOOKALIKE_OF edge ${edge.id} has an empty required property`);
+      }
+
+      if (
+        !Number.isFinite(edge.normalizedDistance) ||
+        edge.normalizedDistance < 0 ||
+        edge.normalizedDistance > 1
+      ) {
+        errors.push(`LOOKALIKE_OF edge ${edge.id} normalizedDistance must be between 0 and 1`);
+      }
+
+      if (!hasValidTransformations(edge.transformations)) {
+        errors.push(`LOOKALIKE_OF edge ${edge.id} has invalid transformations`);
+      }
+    }
 
     if (
       source !== undefined &&

@@ -1,3 +1,5 @@
+import type { TransformationKind } from "../typosquatting/types.js";
+
 export type NodeId = number;
 export type EdgeId = number;
 export type UnixEpochMilliseconds = number;
@@ -16,7 +18,8 @@ export type NodeKind =
   | "Organization"
   | "Incident"
   | "Evidence"
-  | "Control";
+  | "Control"
+  | "Finding";
 
 export type DependencyType =
   | "production"
@@ -41,6 +44,8 @@ export type EvidenceSourceType =
   | "sigstore"
   | "runtime-telemetry"
   | "security-advisory"
+  | "typosquat-detector"
+  | "analyst-review"
   | "synthetic-fixture"
   | "other";
 
@@ -193,6 +198,35 @@ export interface EvidenceNode extends BaseNode<"Evidence"> {
   readonly incidentId?: NodeId;
 }
 
+export type TyposquatFindingStatus =
+  | "candidate"
+  | "suspicious"
+  | "high-confidence"
+  | "confirmed"
+  | "dismissed";
+
+export interface TyposquatFindingNode extends BaseNode<"Finding"> {
+  readonly findingType: "typosquatting";
+  readonly status: TyposquatFindingStatus;
+
+  /** Ranking evidence on a 0..100 scale; this is not a probability. */
+  readonly score: number;
+
+  readonly detectorVersion: string;
+  readonly policyVersion: string;
+  readonly corpusId: string;
+  readonly comparisonVersion: string;
+  readonly indexVersion: string;
+  readonly candidatePackageName: string;
+  readonly targetPackageName: string;
+  readonly summary: string;
+  readonly transformations: readonly TransformationKind[];
+  readonly reasonCodes: readonly string[];
+  readonly detectedAt: UnixEpochMilliseconds;
+  readonly decidedAt?: UnixEpochMilliseconds;
+  readonly decisionReason?: string;
+}
+
 export type ControlAction =
   | "block-package-version"
   | "pin-dependency"
@@ -227,7 +261,8 @@ export type GraphNode =
   | OrganizationNode
   | IncidentNode
   | EvidenceNode
-  | ControlNode;
+  | ControlNode
+  | TyposquatFindingNode;
 
 export type CanonicalRelKind =
   | "HAS_VERSION"
@@ -246,7 +281,9 @@ export type CanonicalRelKind =
   | "CONTROLS"
   | "AFFECTS"
   | "SUPPORTS"
-  | "TARGETS";
+  | "TARGETS"
+  | "LOOKALIKE_OF"
+  | "IMITATES";
 
 export type GraphRelKind = CanonicalRelKind | "USED_BY";
 
@@ -299,17 +336,26 @@ export interface DependencyEdge
   readonly integrity?: string;
 }
 
+export interface LookalikeEdge
+  extends CanonicalEdgeBase<"LOOKALIKE_OF"> {
+  readonly algorithm: string;
+  readonly comparisonVersion: string;
+  readonly normalizedDistance: number;
+  readonly transformations: readonly TransformationKind[];
+}
+
 export interface StandardCanonicalEdge
   extends CanonicalEdgeBase<
     Exclude<
       CanonicalRelKind,
-      "DECLARES_DEPENDENCY" | "DEPENDS_ON"
+      "DECLARES_DEPENDENCY" | "DEPENDS_ON" | "LOOKALIKE_OF"
     >
   > {}
 
 export type CanonicalEdge =
   | DependencyDeclarationEdge
   | DependencyEdge
+  | LookalikeEdge
   | StandardCanonicalEdge;
 
 export interface DerivedEdge extends BaseEdge<"USED_BY"> {

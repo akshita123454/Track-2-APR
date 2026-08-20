@@ -908,6 +908,344 @@ const LIVE_AFFECTED_VERSION_SCHEMA = {
   },
 } as const;
 
+const EXPOSURE_STAGE_VALUES = [
+  "candidate",
+  "semver-eligible",
+  "resolved",
+  "built",
+  "deployed",
+  "runtime-reachable",
+  "execution-observed",
+] as const;
+
+const SECURITY_CONCLUSION_VALUES = [
+  "candidate",
+  "affected",
+  "exposed",
+  "reachable",
+  "executed",
+] as const;
+
+const CONFIDENCE_ASSESSMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "level",
+    "policyVersion",
+    "supportingEvidenceIds",
+    "reasons",
+    "complete",
+    "synthetic",
+  ],
+  properties: {
+    level: {
+      type: "string",
+      enum: [
+        "confirmed",
+        "strong",
+        "probable",
+        "possible",
+        "contextual",
+        "unknown",
+      ],
+    },
+    policyVersion: {
+      type: "string",
+      const: "service-impact-v1",
+    },
+    supportingEvidenceIds:
+      EVIDENCE_IDS_SCHEMA,
+    reasons: {
+      type: "array",
+      minItems: 1,
+      maxItems: 20,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 2_048,
+      },
+    },
+    complete: {
+      type: "boolean",
+    },
+    synthetic: {
+      type: "boolean",
+    },
+  },
+} as const;
+
+const EVIDENCE_FACT_ASSESSMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "status",
+    "evidenceIds",
+    "reason",
+  ],
+  properties: {
+    status: {
+      type: "string",
+      enum: [
+        "proven",
+        "not-proven",
+        "unknown",
+      ],
+    },
+    evidenceIds:
+      EVIDENCE_IDS_SCHEMA,
+    reason: {
+      type: "string",
+      minLength: 1,
+      maxLength: 2_048,
+    },
+  },
+} as const;
+
+const PATH_IMPACT_ASSESSMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "pathKey",
+    "stage",
+    "conclusion",
+    "confidence",
+    "evidenceIds",
+    "missingEvidenceIds",
+    "uncertainties",
+  ],
+  properties: {
+    pathKey: {
+      type: "string",
+      minLength: 1,
+      maxLength: 32_768,
+    },
+    stage: {
+      type: "string",
+      enum: EXPOSURE_STAGE_VALUES,
+    },
+    conclusion: {
+      type: "string",
+      enum: SECURITY_CONCLUSION_VALUES,
+    },
+    confidence:
+      CONFIDENCE_ASSESSMENT_SCHEMA,
+    evidenceIds:
+      EVIDENCE_IDS_SCHEMA,
+    missingEvidenceIds:
+      EVIDENCE_IDS_SCHEMA,
+    uncertainties: {
+      type: "array",
+      maxItems: 20,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 2_048,
+      },
+    },
+  },
+} as const;
+
+const IMPACT_AFFECTED_VERSION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "packageName",
+    "version",
+  ],
+  properties: {
+    id: NODE_ID_SCHEMA,
+    packageName: {
+      type: "string",
+      minLength: 1,
+      maxLength: 512,
+    },
+    version: {
+      type: "string",
+      minLength: 1,
+      maxLength: 256,
+    },
+  },
+} as const;
+
+const SERVICE_SELECTION_ASSESSMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "state",
+    "dependencyTypes",
+    "declaredRanges",
+    "lockfilePaths",
+    "resolvedVersions",
+    "reason",
+  ],
+  properties: {
+    state: {
+      type: "string",
+      enum: [
+        "exactly-resolved",
+        "unknown",
+      ],
+    },
+    dependencyTypes: {
+      type: "array",
+      maxItems: 4,
+      uniqueItems: true,
+      items: {
+        type: "string",
+        enum: [
+          "production",
+          "development",
+          "optional",
+          "peer",
+        ],
+      },
+    },
+    declaredRanges: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxTotalPaths,
+      uniqueItems: true,
+      items: {
+        type: "string",
+        maxLength: 1_024,
+      },
+    },
+    lockfilePaths: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxTotalPaths,
+      uniqueItems: true,
+      items: {
+        type: "string",
+        maxLength: 4_096,
+      },
+    },
+    resolvedVersions: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxAffectedVersions,
+      items:
+        IMPACT_AFFECTED_VERSION_SCHEMA,
+    },
+    reason: {
+      type: "string",
+      minLength: 1,
+      maxLength: 2_048,
+    },
+  },
+} as const;
+
+const SERVICE_IMPACT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "serviceId",
+    "stage",
+    "conclusion",
+    "confidence",
+    "summary",
+    "selection",
+    "temporal",
+    "build",
+    "deployment",
+    "runtime",
+    "authority",
+    "paths",
+    "evidenceIds",
+    "missingEvidence",
+    "warnings",
+    "complete",
+    "synthetic",
+  ],
+  properties: {
+    serviceId: NODE_ID_SCHEMA,
+    stage: {
+      type: "string",
+      enum: EXPOSURE_STAGE_VALUES,
+    },
+    conclusion: {
+      type: "string",
+      enum: SECURITY_CONCLUSION_VALUES,
+    },
+    confidence:
+      CONFIDENCE_ASSESSMENT_SCHEMA,
+    summary: {
+      type: "string",
+      minLength: 1,
+      maxLength: 4_096,
+    },
+    selection:
+      SERVICE_SELECTION_ASSESSMENT_SCHEMA,
+    temporal: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "status",
+        "asOf",
+        "reason",
+      ],
+      properties: {
+        status: {
+          type: "string",
+          const: "unknown",
+        },
+        asOf: TIMESTAMP_SCHEMA,
+        reason: {
+          type: "string",
+          minLength: 1,
+          maxLength: 2_048,
+        },
+      },
+    },
+    build:
+      EVIDENCE_FACT_ASSESSMENT_SCHEMA,
+    deployment:
+      EVIDENCE_FACT_ASSESSMENT_SCHEMA,
+    runtime:
+      EVIDENCE_FACT_ASSESSMENT_SCHEMA,
+    authority:
+      EVIDENCE_FACT_ASSESSMENT_SCHEMA,
+    paths: {
+      type: "array",
+      minItems: 1,
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS
+          .maxPathsPerService,
+      items:
+        PATH_IMPACT_ASSESSMENT_SCHEMA,
+    },
+    evidenceIds:
+      EVIDENCE_IDS_SCHEMA,
+    missingEvidence: {
+      type: "array",
+      maxItems: 50,
+      uniqueItems: true,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 2_048,
+      },
+    },
+    warnings: {
+      type: "array",
+      maxItems: 50,
+      uniqueItems: true,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 2_048,
+      },
+    },
+    complete: {
+      type: "boolean",
+    },
+    synthetic: {
+      type: "boolean",
+    },
+  },
+} as const;
+
 export const LIVE_BLAST_RADIUS_RESPONSE_SCHEMA = {
   $id:
     ANALYSIS_SCHEMA_IDS
@@ -930,6 +1268,7 @@ export const LIVE_BLAST_RADIUS_RESPONSE_SCHEMA = {
     "incident",
     "affectedVersions",
     "evidenceCatalog",
+    "serviceImpacts",
   ],
 
   properties: {
@@ -954,6 +1293,14 @@ export const LIVE_BLAST_RADIUS_RESPONSE_SCHEMA = {
             .maxEvidenceIds,
         items:
             LIVE_EVIDENCE_CATALOG_ENTRY_SCHEMA,
+        },
+
+        serviceImpacts: {
+        type: "array",
+        maxItems:
+            ANALYSIS_ROUTE_LIMITS.maxServices,
+        items:
+            SERVICE_IMPACT_SCHEMA,
         },
 
     affectedVersionLookup: {

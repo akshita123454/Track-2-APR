@@ -51,6 +51,7 @@ export type JobFailureCode =
   | "PERSISTENCE_PARTIAL"
   | "JOB_TIMED_OUT"
   | "PARTIAL_COLLECTION"
+  | "TYPOSQUATTING_SCAN_FAILED"
   | "INTERNAL_JOB_ERROR";
 
 const SAFE_FAILURE_MESSAGES: Readonly<
@@ -72,6 +73,8 @@ const SAFE_FAILURE_MESSAGES: Readonly<
     "The ingestion exceeded its permitted execution time.",
   PARTIAL_COLLECTION:
     "The ingestion completed with one or more unavailable inputs.",
+  TYPOSQUATTING_SCAN_FAILED:
+    "The dependency graph was persisted, but typosquatting analysis could not be completed.",
   INTERNAL_JOB_ERROR:
     "The ingestion could not be completed because of an internal error.",
 };
