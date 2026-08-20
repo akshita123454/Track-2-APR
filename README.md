@@ -4,164 +4,171 @@
 
 ### The Graph-Native Supply Chain Firewall & Defense Platform
 
-**Evidence-first · HydraDB-powered · Fail-closed by design**
+**Built on HydraDB · Evidence-First · Fail-Closed by Design**
 
-> **Trace the blast. Expose authority. Block poisoned releases.**
+> **Trace the blast. Verify the evidence. Expose authority. Block poisoned releases.**
 
 </div>
 
 ---
 
-## 🎥 Demo Video
+# The Supply-Chain Problem We Are Solving
 
-> **YouTube Demo:** [Add your YouTube video link here](YOUR_YOUTUBE_DEMO_LINK)
+A modern software application is not built from one codebase. It is built from a large chain of external packages, exact resolved versions, lockfiles, maintainers, CI workflows, build caches, artifacts, credentials, and release pipelines.
 
-> **Live Dashboard / Evidence Console:** [Add dashboard link here](YOUR_DASHBOARD_LINK)
+When one package is compromised, typosquatted, or published through an unsafe build process, security teams need immediate answers:
 
----
-
-# The Problem We Are Solving
-
-Modern applications depend on hundreds or thousands of third-party packages. When one package is compromised, typosquatted, or published through an unsafe build pipeline, security teams must answer difficult questions immediately:
-
-1. Which **exact versions** are affected?
-2. Which internal applications and services depend on them?
+1. Which **exact package versions** are affected?
+2. Which applications and services depend on those versions?
 3. Through which dependency path did the risk spread?
-4. Which findings are supported by real evidence, and which are only possible paths?
-5. Could the compromise reach credentials, publishing access, or other sensitive authority?
-6. What is the fastest and safest action to stop further spread?
-7. Can a release be stopped **before** it reaches users?
+4. Which paths are supported by real evidence?
+5. Which credentials, permissions, or sensitive capabilities may become reachable next?
+6. What direct containment action can reduce the exposure fastest?
+7. Can an unsafe release be blocked **before it is published**?
 
-Most existing tools solve only one part of this problem. They scan a manifest, match a package name against a vulnerability list, and produce an alert. They usually do not provide the full evidence-backed chain from package to service, service to authority, or unsafe build input to published artifact.
+Most tools solve only one small part of this problem. They scan a manifest, match a package name against a known advisory, and produce an alert. They often cannot prove the full path from a compromised package to an internal service, cannot distinguish a suspicious possibility from evidence-backed exposure, and do not inspect the causal history of a release before publication.
 
 HydraGuard solves this as one connected **HydraDB security graph**.
 
 ```text
-Package → Version → Dependency → Application → Service
-                                      ↓
+Package → Exact Version → Dependency → Application → Service
+                                         ↓
                          Workflow → Credential → Authority
-                                      ↓
-Source Change → Cache → Build → Artifact → Release
+                                         ↓
+Source Change → Cache → Build → Artifact → Published Release
 ```
 
-Instead of giving an unexplained risk score, HydraGuard shows the **exact path, evidence, impact, and response options**.
+Instead of an unexplained risk score, HydraGuard returns the path, evidence, impact, uncertainty, and response options.
 
 ---
 
-# Our Solution
+# What We Built
 
-HydraGuard is a graph-native software supply-chain security platform built on HydraDB. It brings together:
+HydraGuard is a graph-native software supply-chain defense platform built on HydraDB.
+
+It combines:
 
 - Exact package and lockfile ingestion
 - Dependency blast-radius analysis
 - Evidence-backed path verification
 - Typosquatting detection
-- Authority and credential reachability analysis
+- Wave 2 authority propagation
 - Immutable containment simulation
-- Pre-publication Release Influence Firewall
-- Explainable Fastify APIs and a visual dashboard
+- Universal Release Influence Firewall
+- Fastify APIs and a React evidence dashboard
 
-Our approach is not multiple disconnected mini-projects. Each capability is part of one security lifecycle:
+Our solution is not a collection of unrelated features. Every capability is part of a single security lifecycle:
 
 ```text
 Detect suspicious package
 → Trace affected services
 → Verify evidence
-→ Discover reachable authority
-→ Simulate containment
+→ Investigate reachable authority
+→ Compare containment actions
 → Prevent unsafe release publication
 ```
 
+This allows HydraGuard to support security teams before, during, and after a supply-chain incident.
+
 ---
 
-# Why HydraDB Is Essential
+# Why HydraDB Is Central to HydraGuard
 
-HydraDB is not used only as storage. It is the central reasoning engine of HydraGuard.
+HydraDB is not used as a simple storage layer. It is the **security memory and graph reasoning foundation** of the entire platform.
 
-We use HydraDB to store and connect:
+HydraGuard stores and connects:
 
 ```text
-Packages, exact package versions, lockfiles, dependencies, services,
-incidents, maintainers, evidence, workflows, caches, builds, artifacts,
-credentials, permissions, authority paths, and releases.
+Packages, package versions, lockfiles, dependencies, services,
+incidents, maintainers, evidence, workflows, caches, builds,
+artifacts, credentials, authority paths, and releases.
 ```
 
-This graph structure lets HydraGuard answer questions that flat package lists cannot answer:
+HydraDB enables HydraGuard to answer graph-native questions:
 
 ```text
 What was affected?
-How was it reached?
-Which exact path proves the relationship?
-What evidence supports the path?
-Which authority could become reachable?
-What containment action reduces the exposure?
-Why was a release allowed, quarantined, or blocked?
+How did the dependency path reach a service?
+What evidence supports that path?
+What authority may become reachable after compromise?
+Which release input influenced the final artifact?
+Which containment action breaks the most relevant path?
 ```
 
-HydraDB enables us to perform graph-native traversal across dependency, evidence, authority, and release-influence relationships. It turns fragmented supply-chain data into one explainable security model.
+A supply-chain incident is a connected chain of cause and impact, not an isolated database record. HydraDB lets us preserve that chain and explain it clearly.
 
 ---
 
-# Core Innovation 1 — Evidence-First Blast Radius
+# Core Innovation 1 — Evidence-First Blast Radius Analysis
 
-## Problem
+## The Challenge
 
-A compromised package may affect a service through many indirect dependencies. A simple vulnerability scan can say that a package exists, but it often cannot prove:
+A vulnerable package can affect a service through multiple transitive dependencies. A normal package scanner may say that a package exists, but it cannot always show:
 
 ```text
-Which service is affected?
-Which exact package version is involved?
-Which dependency path connects them?
-What evidence supports the result?
+Which exact version is involved?
+Which service is exposed?
+Which dependency path proves it?
+What evidence supports the finding?
 ```
 
 ## Our Approach
 
-HydraGuard performs deterministic reverse graph traversal:
+HydraGuard performs deterministic reverse traversal over the HydraDB dependency graph:
 
 ```text
 Incident
 → Affected PackageVersion
-→ Reverse dependency paths
+→ Reverse Dependency Paths
 → Applications and Services
 ```
 
-For every affected service, HydraGuard returns an explainable proof path instead of an opaque score.
+Each impacted service is returned with an explainable path:
 
 ```text
-Compromised Version
+Compromised Package Version
 ← Dependency
 ← Application
-← Service
+← Internal Service
 ```
 
 ## Technical Depth
 
-- Exact package-version graph nodes
-- Lockfile-aware dependency information
-- Deterministic traversal order
-- Bounded depth, fan-out, path, and state limits
+- Exact package-version identities
+- npm and lockfile-aware dependency ingestion
+- Reverse dependency traversal
+- Deterministic path ordering
+- Bounded traversal depth, fan-out, paths, and states
 - Canonical dependency relationships
-- Warnings when analysis is incomplete or truncated
-- Evidence Funnel to separate possible paths from verified paths
+- Explicit truncation and warning reporting
+- Evidence Funnel for path confidence analysis
 
 ## Why It Matters
 
-A security responder does not need only an alert. They need a defensible answer:
+HydraGuard gives responders a defensible answer:
 
 > “This service is affected because it resolved this exact version through this dependency path, supported by this evidence.”
+
+This is stronger than an alert that only says a package name was found.
 
 ---
 
 # Core Innovation 2 — Evidence-Backed Typosquat Radar
 
-## Problem
+## The Challenge
 
-Package names that look similar are not automatically malicious. Basic typo detectors create too many false positives, causing analysts to ignore alerts.
+Name similarity alone does not prove malicious intent. Traditional typosquat detectors frequently produce noisy alerts, leading analysts to ignore them.
+
+For example:
+
+```text
+A package may look similar to a trusted package,
+but it may not be used by the organisation at all.
+```
 
 ## Our Approach
 
-HydraGuard detects suspicious package names through multiple transformation patterns, including:
+HydraGuard detects suspicious naming patterns such as:
 
 ```text
 Adjacent transposition
@@ -172,81 +179,81 @@ Separator variation
 Repeated characters
 Scope impersonation
 Unicode confusables
-Prefix and suffix variations
+Prefix and suffix variation
 ```
 
-However, name similarity alone is never treated as confirmed compromise.
-
-HydraGuard uses an evidence gate:
+However, similarity is only the beginning. HydraGuard applies an evidence gate:
 
 ```text
-Suspicious name
-→ Candidate
-→ Evidence verification
-→ Lockfile / resolution proof
-→ Confirmed or dismissed finding
+Suspicious Name
+→ Candidate Finding
+→ Evidence Verification
+→ Lockfile / Resolution Proof
+→ Confirmed or Dismissed
 ```
+
+A similar-looking package is not treated as confirmed exposure unless the environment has actually resolved or used it.
 
 ## Why It Matters
 
-This separates:
+HydraGuard separates:
 
 ```text
-“This package looks suspicious”
+“This name looks suspicious.”
 ```
 
 from:
 
 ```text
-“This suspicious package was actually resolved inside the environment”
+“This suspicious package was actually resolved in our environment.”
 ```
 
-That difference reduces alert fatigue and makes the output useful during real investigation.
+This reduces false alarms and gives analysts a more trustworthy signal.
 
 ---
 
 # Core Innovation 3 — Wave 2 Authority Propagation
 
-## Problem
+## The Challenge
 
-A compromised dependency can be more dangerous than its immediate blast radius.
+The damage from a compromised package may not stop at the package or immediate service.
 
-If a compromised package reaches a build workflow, service, or repository, it may also reach:
+A compromise can potentially move through workflows or services to reach:
 
 ```text
 Credentials
 Sensitive permissions
 Publishing access
-Cloud capabilities
-Operational authority
+Operational capabilities
+Cloud-connected authority
 ```
 
-Traditional dependency scanners usually stop after reporting affected packages or services. They do not ask what sensitive access may become reachable next.
+Most dependency tools stop after identifying affected packages or services. They do not investigate what sensitive authority may become reachable next.
 
 ## Our Approach
 
-HydraGuard adds a second analysis layer called **Wave 2 Authority Propagation**.
+HydraGuard adds a second graph-analysis layer called **Wave 2 Authority Propagation**:
 
 ```text
 Compromised Package
 → Affected Service or Workflow
 → Credential
-→ Capability or Authority Target
+→ Authority or Capability Target
 ```
 
-This helps security teams investigate the next possible stage of an attack.
+This creates a broader view of supply-chain risk.
 
 ## Technical Depth
 
-Wave 2 is intentionally designed to avoid overstating risk:
+Wave 2 Authority Propagation was designed carefully to avoid false claims:
 
-- Candidate authority paths are not claimed as proven exploitation
-- Evidence is validated before conclusions are presented
+- Authority paths are treated as candidates, not automatic proof of exploitation
+- Evidence validation is required
 - Traversal is deterministic and bounded
 - Cycles and excessive fan-out are controlled
-- Missing evidence is not silently treated as safety
-- Truncation and uncertainty are explicitly surfaced
-- Original graph inputs remain immutable
+- Missing evidence is visible
+- Truncation is reported explicitly
+- Source graph inputs remain immutable
 
 ## Why It Matters
 
@@ -256,38 +263,38 @@ HydraGuard answers not only:
 
 but also:
 
-> “What authority, credentials, or sensitive capability may become reachable through the affected path?”
+> “What credentials, permissions, or authority may become reachable through the affected path?”
 
-This transforms package scanning into a more complete supply-chain security investigation.
+This is a major extension beyond normal dependency scanning.
 
 ---
 
 # Core Innovation 4 — Universal Release Influence Firewall
 
-## Problem
+## The Challenge
 
-A release can be published by a trusted workflow with valid OIDC and still be unsafe.
+A release can be published using valid OIDC and a trusted workflow, while still being unsafe.
 
 For example:
 
 ```text
-Untrusted pull request
-→ Untrusted workflow
-→ Shared build cache
-→ Trusted release workflow restores cache
-→ Compromised build artifact
-→ Valid OIDC publishes release
+Untrusted Pull Request
+→ Untrusted Workflow
+→ Shared Cache
+→ Trusted Release Workflow Restores Cache
+→ Compromised Artifact
+→ Valid OIDC Publishes Release
 ```
 
-The publishing identity is valid, but the artifact was influenced by an unsafe path.
+The publisher identity is valid, but the artifact was influenced by an unsafe path.
 
-Traditional tools often inspect the package only after publication. By then, downstream users may already be exposed.
+Many tools inspect the final package only after publication. By then, downstream users may already have installed it.
 
 ## Our Approach
 
 HydraGuard introduces a **Universal Release Influence Firewall**.
 
-Before a release is trusted, the firewall traces backwards through the complete causal path:
+Before a release is trusted, HydraGuard traces its full causal history:
 
 ```text
 Source Change
@@ -300,22 +307,23 @@ Source Change
 → Published Release
 ```
 
-The firewall returns one of three explainable decisions:
+The firewall returns an explainable decision:
 
 | Verdict | Meaning | Action |
 |:---:|---|---|
 | `ALLOW` | Trusted and evidence-backed causal path | Release may proceed |
-| `QUARANTINE` | Missing, unknown, or incomplete evidence | Hold for review |
+| `QUARANTINE` | Unknown, missing, or incomplete evidence | Hold for review |
 | `BLOCK` | Untrusted influence reached the release | Prevent publication |
 
-## What It Detects
+## What the Firewall Detects
 
+- Untrusted source-change influence
 - Untrusted workflow influence
-- Untrusted source changes
 - Shared-cache poisoning across trust boundaries
-- Missing artifact publication paths
-- Missing or unknown evidence
-- Invalid graph relationships
+- Missing artifact-publication paths
+- Unknown trust boundaries
+- Missing evidence
+- Malformed release graphs
 - Unsafe causal paths even when final OIDC is valid
 
 ## Key Security Principle
@@ -324,147 +332,155 @@ The firewall returns one of three explainable decisions:
 Trusted publisher identity ≠ trusted artifact
 ```
 
-A valid OIDC token cannot override an unsafe build or cache influence path.
+A valid OIDC token cannot make an unsafe build path safe.
 
 ## Why It Matters
 
-The firewall is designed to move supply-chain security from:
+The Release Influence Firewall shifts the security model from:
 
 ```text
-Detect after publication
+Detect compromised packages after publication
 ```
 
 to:
 
 ```text
-Prevent before publication
+Prevent unsafe releases before publication
 ```
 
-It supports arbitrary ecosystems, including npm, PyPI, Maven, internal registries, and future package ecosystems.
+It supports arbitrary ecosystems, including npm, PyPI, Maven, internal registries, and future ecosystems.
 
 ---
 
-# Fastest Path to Stop the Spread
+# Direct Containment Path Analysis
 
-HydraGuard does not only identify risk. It helps responders understand the quickest and most effective place to break the attack path.
+Detection is valuable, but responders also need to know where to act first.
 
-The platform combines:
+HydraGuard uses the dependency path, evidence context, and authority relationship to help teams identify direct places where containment can reduce further spread.
 
-```text
-Blast Radius
-+ Evidence Verification
-+ Authority Propagation
-+ Containment Simulation
-```
-
-Containment actions are evaluated as immutable graph overlays:
+Examples include:
 
 ```text
-Original evidence graph
-+ proposed containment action
-= simulated remaining exposure
+Isolate an affected service
+Block a dependency path
+Quarantine an unsafe release
+Remove a risky authority connection
+Disable access linked to a suspicious workflow
 ```
 
-This lets teams compare actions such as:
+The containment engine uses immutable overlays:
 
-- Isolating an affected service
-- Blocking a dependency relationship
-- Revoking or removing a sensitive credential path
-- Breaking a high-impact authority connection
-- Quarantining an unsafe release
+```text
+Original Evidence Graph
++ Proposed Containment Directive
+= Simulated Remaining Exposure
+```
 
-The original evidence graph is never modified. Analysts can compare before-and-after exposure safely and choose the most direct response path.
+This means teams can compare containment choices without changing the original evidence graph.
 
-> HydraGuard is designed to help teams stop further spread quickly while preserving the evidence needed for investigation.
+HydraGuard does not claim that every result is a guaranteed optimal answer. Instead, it provides an explainable and safe way to compare response paths and identify high-value actions quickly.
 
 ---
 
-# Fail-Closed by Design
+# Fail-Closed Security Principles
 
-Supply-chain security is dangerous when unknown information is treated as safe.
-
-HydraGuard follows fail-closed principles:
+HydraGuard is designed so that missing information is never silently treated as safety.
 
 - Missing evidence does not become trusted evidence
 - Unknown trust boundaries do not become safe boundaries
 - Corrupt graph data is rejected
 - Incomplete release paths are quarantined
-- Traversal limits are reported explicitly
-- Candidate authority paths are not presented as confirmed compromise
-- Derived graph relationships cannot fabricate evidence
-- Containment simulations never rewrite original evidence
+- Traversal limits are reported
+- Candidate authority paths are not presented as confirmed exploitation
+- Derived relationships cannot fabricate evidence
+- Containment simulations never modify original evidence
 
-This makes HydraGuard useful for security decisions where uncertainty must be visible, not hidden.
+This makes uncertainty visible to responders instead of hiding it behind a simple risk score.
 
 ---
 
-# HydraDB-Powered Security Lifecycle
+# Research Positioning and Broader Scope
+
+During our research and implementation period, we studied dependency-exposure and supply-chain security approaches that focus primarily on package detection, manifest scanning, or dependency reachability.
+
+HydraGuard intentionally broadens this scope.
+
+Instead of focusing on only one company, one application, or one package ecosystem, our graph model is designed around reusable entities and relationships:
+
+```text
+Any package ecosystem
+Any number of packages
+Any number of services
+Any number of dependency paths
+Any release pipeline
+Any evidence source
+```
+
+Our contribution is not a claim that existing research is incorrect. Instead, HydraGuard extends the security conversation by combining several layers that are often handled separately:
+
+| Security Need | HydraGuard Approach |
+|---|---|
+| Dependency exposure | Exact version-level graph traversal |
+| False-positive reduction | Evidence Funnel and lockfile-aware verification |
+| Shared-risk investigation | Authority and infrastructure relationships |
+| Operational impact | Wave 2 authority propagation |
+| Response planning | Immutable containment simulation |
+| Release prevention | Pre-publication Release Influence Firewall |
+| Explainability | Evidence-backed graph paths, not opaque scores |
+
+Within a short hackathon build period, our goal was to demonstrate a broader, practical, and technically defensible graph-security architecture—not to make unsupported benchmark claims.
+
+---
+
+# Security Lifecycle in HydraGuard
 
 ```text
 1. Collect
    Package metadata, lockfiles, incidents, evidence, and release signals
 
 2. Persist
-   Store stable nodes and evidence-backed relationships in HydraDB
+   Store stable graph entities and relationships in HydraDB
 
 3. Analyse
-   Trace dependency blast radius and verify path evidence
+   Trace dependency blast radius and verify supporting evidence
 
-4. Propagate
-   Discover possible credential and authority reachability
+4. Investigate
+   Discover possible authority and credential reachability
 
 5. Prevent
    Evaluate release influence before publication
 
 6. Contain
-   Compare response actions against the immutable evidence graph
+   Compare response actions against an immutable evidence graph
 ```
 
 ---
 
-# Dashboard and Demonstration
-
-The HydraGuard Evidence Console presents the security graph in a simple, visual format.
-
-## Planned / Demonstrated Dashboard Views
-
-| View | Purpose |
-|---|---|
-| Incident Overview | Show affected package versions and incident details |
-| Blast Radius | Show services and dependency proof paths |
-| Evidence Funnel | Separate structural candidates from verified evidence |
-| Typosquat Radar | Show suspicious package candidates and evidence status |
-| Wave 2 Authority | Show possible credential and authority reachability |
-| Release Firewall | Show `ALLOW`, `QUARANTINE`, and `BLOCK` verdicts |
-| Containment | Compare response actions and remaining exposure |
-| Proof & Validation | Show deterministic checks and security guarantees |
-
-> **Dashboard link:** [Add dashboard URL here](YOUR_DASHBOARD_LINK)
-> **YouTube demo:** [Add demo video here](YOUR_YOUTUBE_DEMO_LINK)
-
----
-
-# Technical Architecture
+# Architecture
 
 ```text
 ┌───────────────────────────────────────────────┐
-│          HydraGuard Dashboard (React)          │
-│  Incidents · Evidence · Paths · Firewall       │
+│       HydraGuard Evidence Console (React)      │
+│ Incidents · Evidence · Paths · Firewall        │
 └──────────────────────┬────────────────────────┘
                        │ REST API
 ┌──────────────────────▼────────────────────────┐
-│           HydraGuard API (Fastify)             │
+│            HydraGuard API (Fastify)            │
 │ Ingest · Analyse · Propagate · Prevent · Contain│
 └───────────┬─────────────────────┬──────────────┘
             │                     │
             │ Graph Driver        │ Package Metadata
 ┌───────────▼─────────────┐  ┌────▼─────────────┐
 │         HydraDB         │  │   npm Registry    │
-│  Evidence Security Graph│  │  Package Metadata │
+│ Evidence Security Graph │  │  Package Metadata │
 └─────────────────────────┘  └──────────────────┘
 ```
 
-## Graph Entities
+---
+
+# Graph Model
+
+## Main Nodes
 
 ```text
 Package
@@ -482,7 +498,7 @@ Artifact
 Release
 ```
 
-## Important Graph Relationships
+## Main Relationships
 
 ```text
 DEPENDS_ON
@@ -525,7 +541,7 @@ Git and GitHub
 
 # Validation
 
-HydraGuard includes dedicated validation for key security behaviors.
+HydraGuard includes focused validation for core security behavior:
 
 ```powershell
 npm run typecheck --prefix "apps/api"
@@ -536,20 +552,40 @@ npm run validate:wave2 --prefix "apps/api"
 npm run validate:containment --prefix "apps/api"
 ```
 
-The Release Influence Firewall validation verifies that:
+The Release Influence Firewall validation confirms:
 
 - npm, PyPI, and Maven releases can be evaluated together
-- Fully trusted releases can be allowed
+- Fully trusted evidence-backed release paths can be allowed
 - Cross-boundary cache poisoning is blocked
 - Valid OIDC does not override unsafe causal paths
-- Missing or unknown influence is quarantined
+- Unknown influence is quarantined
+- Missing publication paths fail closed
 - Malformed graphs are rejected
 - Traversal limits are surfaced
 - Source graphs remain immutable
 
 ---
 
-# Running HydraGuard
+# Team Contributions
+
+## Akshita
+
+- Developed core dependency blast-radius analysis
+- Implemented typosquatting detection
+- Built the dashboard and visual security experience
+- Contributed to graph integration and user-facing explanation
+
+## Pratik Raj
+
+- Designed and implemented Wave 2 Authority Propagation
+- Designed and implemented the Universal Release Influence Firewall
+- Added immutable release-influence snapshots in HydraDB
+- Implemented firewall API contracts, strict validation, error handling, and smoke tests
+- Contributed to containment and graph-security validation
+
+---
+
+# Run HydraGuard
 
 ## Quick Dashboard Demo
 
@@ -591,7 +627,7 @@ npm run api
 npm run demo
 ```
 
-6. Verify API health:
+6. Verify the stack:
 
 ```text
 http://localhost:3000/health
@@ -600,28 +636,23 @@ http://localhost:3000/ready
 
 ---
 
-# Team Contributions
+# Demo Video and Dashboard
 
-## Akshita
+🎥 **YouTube Demo Video:**
+[Add your YouTube demo link here](YOUR_YOUTUBE_DEMO_LINK)
 
-- Developed the core dependency blast-radius analysis
-- Implemented typosquatting detection
-- Built the dashboard and visual security experience
-- Contributed to incident analysis, graph integration, and user-facing explanation
-
-## Pratik Raj
-
-- Designed and implemented Wave 2 Authority Propagation
-- Designed and implemented the Universal Release Influence Firewall
-- Added immutable release-influence snapshots in HydraDB
-- Implemented persisted firewall API contracts, strict validation, error handling, and smoke tests
-- Contributed to containment and graph-security validation
+🖥️ **Live Dashboard / Evidence Console:**
+[Add your dashboard link here](YOUR_DASHBOARD_LINK)
 
 ---
 
-# HydraGuard
+<div align="center">
 
-> **Detection tells you that a package may be dangerous.**
-> **HydraGuard shows what it reached, what evidence proves it, what authority may be exposed, and whether the next unsafe release should be blocked before it ships.**
+## HydraGuard
+
+**Detection tells you that a package may be dangerous.**
+**HydraGuard shows what it reached, what evidence proves it, what authority may be exposed, and whether the next unsafe release should be blocked before it ships.**
 
 **Evidence-first · Graph-native · Fail-closed**
+
+</div>
