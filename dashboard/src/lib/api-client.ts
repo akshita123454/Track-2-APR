@@ -147,3 +147,51 @@ export async function fetchIncidents(
     signal: options?.signal,
   }));
 }
+
+
+export async function createNpmIngestion(
+  packageName: string,
+  idempotencyKey: string,
+  signal?: AbortSignal
+): Promise<import('./api-types').IngestionAcceptedResponse> {
+  return readApiResponse<import('./api-types').IngestionAcceptedResponse>(await fetch(
+    apiUrl('/ingestions/npm'),
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        roots: [{ name: packageName }],
+        maxPackages: 100,
+        maxDepth: 3,
+        includeDevDependencies: false,
+      }),
+      signal,
+    }
+  ));
+}
+
+export async function fetchIngestionJob(
+  ingestionId: string,
+  signal?: AbortSignal
+): Promise<import('./api-types').IngestionJobResponse> {
+  return readApiResponse<import('./api-types').IngestionJobResponse>(await fetch(
+    apiUrl(`/ingestions/${encodeURIComponent(ingestionId)}`),
+    { headers: { Accept: 'application/json' }, signal }
+  ));
+}
+
+export async function fetchPackageOverview(
+  packageName: string,
+  signal?: AbortSignal
+): Promise<import('./api-types').PackageOverviewResponse> {
+  const url = apiUrl(`/packages/${encodeURIComponent(packageName)}`);
+  url.searchParams.set('limit', '12');
+  return readApiResponse<import('./api-types').PackageOverviewResponse>(await fetch(
+    url,
+    { headers: { Accept: 'application/json' }, signal }
+  ));
+}

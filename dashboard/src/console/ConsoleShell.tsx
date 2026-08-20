@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PackageInvestigation } from './PackageInvestigation';
 import {
   CAPABILITIES,
   HEADLINE_STATS,
@@ -507,6 +508,8 @@ export function ConsoleShell({ onExit }: ConsoleShellProps) {
 
         <main className="min-h-0 flex-1 overflow-y-auto px-5 py-8 sm:px-8">
           <div className="mx-auto max-w-6xl">
+            <PackageInvestigation onOpenPanel={setPanel} />
+            <div className="h-8" />
             {panel === 'overview' && <Overview go={setPanel} />}
 
             {cap && (

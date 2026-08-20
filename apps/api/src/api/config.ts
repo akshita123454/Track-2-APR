@@ -233,7 +233,7 @@ function readCorsOrigins(
 ): readonly string[] {
   const raw =
     env.API_CORS_ORIGINS ??
-    "http://localhost:5173";
+    "http://localhost:5173,http://localhost:8080";
 
   const origins = [
     ...new Set(

@@ -83,6 +83,10 @@ import {
 } from "./routes/ingestions.js";
 
 import {
+  registerPackageRoutes,
+} from "./routes/packages.js";
+
+import {
   registerIncidentRoutes,
 } from "./routes/incidents.js";
 
@@ -361,6 +365,11 @@ export async function buildServer(
           config.persistence,
       },
     },
+  );
+
+  await app.register(
+    registerPackageRoutes,
+    { driver },
   );
 
   await app.register(

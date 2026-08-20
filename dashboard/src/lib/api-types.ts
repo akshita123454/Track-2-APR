@@ -459,3 +459,85 @@ export interface IncidentListResponse {
   readonly truncated: boolean;
   readonly nextCursor: IncidentListCursor | null;
 }
+
+
+// ─── Package investigation console ─────────────────────────────
+
+export interface IngestionAcceptedResponse {
+  readonly ingestionId: string;
+  readonly status: 'queued';
+  readonly submittedAt: string;
+}
+
+export type IngestionJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'partially-completed'
+  | 'failed';
+
+export interface IngestionJobResponse {
+  readonly ingestionId: string;
+  readonly status: IngestionJobStatus;
+  readonly submittedAt: string;
+  readonly completedAt?: string | null;
+  readonly nodeCount?: number;
+  readonly edgeCount?: number;
+  readonly errors?: readonly string[];
+}
+
+export interface PackageOverviewResponse {
+  readonly packageName: string;
+  readonly found: boolean;
+  readonly versions: readonly {
+    readonly id: NodeId;
+    readonly version: string;
+    readonly publishedAt: UnixEpochMilliseconds | null;
+    readonly observedAt: UnixEpochMilliseconds;
+  }[];
+  /** Registry declarations: useful context, never presented as installed. */
+  readonly declarations: readonly {
+    readonly sourceVersionId: NodeId;
+    readonly sourceVersion: string;
+    readonly packageName: string;
+    readonly declaredRange: string;
+    readonly dependencyType: DependencyType;
+  }[];
+  /** Exact lockfile-backed DEPENDS_ON facts from the internal graph. */
+  readonly dependents: readonly {
+    readonly rootVersionId: NodeId;
+    readonly nodeId: NodeId;
+    readonly nodeKind: string;
+    readonly logicalId: string;
+    readonly displayName: string;
+    readonly criticality: ServiceCriticality | null;
+    readonly lockfilePath: string | null;
+    readonly validFrom: UnixEpochMilliseconds | null;
+    readonly validUntil: UnixEpochMilliseconds | null;
+  }[];
+  readonly maintainers: readonly {
+    readonly handle: string;
+    readonly email: string | null;
+  }[];
+  /** Other packages reachable via the same persisted MAINTAINS authority. */
+  readonly authorityPackages: readonly {
+    readonly maintainerHandle: string;
+    readonly packageName: string;
+  }[];
+  readonly incidents: readonly {
+    readonly id: NodeId;
+    readonly title: string;
+    readonly status: IncidentStatus;
+    readonly intervalStart: UnixEpochMilliseconds;
+    readonly intervalEnd: UnixEpochMilliseconds | null;
+  }[];
+  readonly truncated: boolean;
+  readonly hydraRead: {
+    readonly engine: 'HydraDB';
+    readonly readEpoch: string;
+    readonly queryCount: number;
+    readonly rowsRead: number;
+    readonly latencyMs: number;
+    readonly consistencyModel: 'bounded-multi-statement-read';
+  };
+}
