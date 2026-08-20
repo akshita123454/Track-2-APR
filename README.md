@@ -203,7 +203,7 @@ Implemented with `LockfileSnapshot` nodes, `RESOLVED_IN` canonical edges, tempor
 |---------|---------|
 | `resolved-during-window` | ✅ Confirmed exposure inside the incident window |
 | `resolved-outside-window` | ℹ️ Dependency exists, but not while vulnerable |
-| `unknown-window` | 🔒 **Insufficient history — treated as unsafe** |
+| `unknown-window` |  **Insufficient history — treated as unsafe** |
 
 **Absence of evidence is never treated as evidence of safety.** Missing lockfile history is *never* silently reported as safe. This single guarantee is what makes HydraGuard's output trustworthy enough to act on during a live incident.
 
@@ -322,11 +322,11 @@ npm run contract
 | `POST` | `/typosquatting/scans` | Scan resolved dependencies |
 | `GET` | `/typosquatting/findings` | List findings |
 | `GET` | `/typosquatting/findings/:id` | Finding detail + evidence |
-| `POST` | `/typosquatting/findings/:id/promote` | Analyst promote 🔐 |
-| `POST` | `/typosquatting/findings/:id/dismiss` | Analyst dismiss 🔐 |
+| `POST` | `/typosquatting/findings/:id/promote` | Analyst promote  |
+| `POST` | `/typosquatting/findings/:id/dismiss` | Analyst dismiss  |
 | `GET` | `/release-influence/snapshots/:id/firewall` | Release verdict |
 
-🔐 = requires analyst bearer authorization
+ = requires analyst bearer authorization
 
 ---
 
