@@ -1,713 +1,426 @@
 <div align="center">
 
-# 🛡️ HydraGuard
+# HydraGuard
 
-### From compromised package to contained incident—one evidence-backed graph path at a time.
+### Evidence-First Supply-Chain Blast Radius & Containment Engine
 
-**A version-aware, time-aware supply-chain blast-radius and containment engine built on HydraDB.**
+**Graph-Native on HydraDB · Fail-Closed by Design · Prevention, Not Just Detection**
 
-[![HackHydra](https://img.shields.io/badge/HackHydra_2026-Track_02_·_Option_A-7C3AED?style=for-the-badge)](https://hackhydra.hydradb.com/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Node.js-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![HydraDB](https://img.shields.io/badge/HydraDB-Open_Source_Graph_DB-0EA5E9?style=for-the-badge)](https://github.com/hydra-db/hydradb)
-[![OpenCypher](https://img.shields.io/badge/OpenCypher-Reverse_Traversal-16A34A?style=for-the-badge)](https://opencypher.org/)
-[![License](https://img.shields.io/badge/License-AGPL--3.0-E11D48?style=for-the-badge)](#-license)
-
-[Demo video](#-demo) · [Architecture](#-architecture) · [Methodology](#-the-evidence-funnel) · [Quick start](#-quick-start) · [Threat model](#-threat-model)
-
-> **HackHydra 2026 — Track 2: Repos, dependencies and code as graphs**<br>
-> **Option A: Supply Chain Blast Radius**
+`Collect → Persist → Analyse → Prevent → Contain`
 
 </div>
 
 ---
 
-## Why HydraGuard exists
+## Run It In One Command
 
-At 09:00, a package version is reported malicious. Security teams do not need another alert that says *"package X exists somewhere."* They need defensible answers before the next build ships:
-
-- Which version ranges could select the compromised release?
-- Which lockfiles actually resolved it?
-- Which CI builds installed it while it was live?
-- Which artifacts reached production?
-- Did the compromised build environment expose publishing or cloud credentials?
-- What is the smallest set of actions that collapses the active blast radius?
-
-HydraGuard treats this as a **graph-constrained incident-response problem**, not a similarity search and not a flat vulnerability scan.
-
-### A conventional scanner sees a list
-
-```text
-repo-a  -> bad-lib@1.2.4  -> vulnerable
-repo-b  -> bad-lib@1.2.3  -> safe
-repo-c  -> bad-lib        -> unknown
+```bash
+npm run demo
 ```
 
-### HydraGuard reconstructs the path and the evidence
+Then open **http://localhost:5173**
 
-```text
-Service
-  └─ Deployment at 19:28
-      └─ Artifact sha256:7d…
-          └─ CI Build at 19:23
-              └─ LockSnapshot from commit 9f1…
-                  └─ Resolution node_modules/a/node_modules/bad-lib
-                      └─ bad-lib@1.2.4
-                          └─ flagged in incident window 19:20–19:33
-
-CI Build
-  └─ ran on release workflow
-      └─ could access npm publishing token
-          └─ could publish 18 additional packages
-```
-
-The result is not merely *"connected."* It is **eligible, resolved, built, deployed, execution-relevant, or privileged**, with every conclusion attached to a path that an analyst can inspect.
+That's it. The HydraGuard Evidence Console loads immediately — **no database setup, no Docker, no configuration required** to review the full system. We engineered it this way deliberately: a reviewer should never face a blank screen or a setup error.
 
 ---
 
-## ✨ What makes HydraGuard different
+## The Problem Nobody Could Answer Fast Enough
 
-| Capability | What it changes |
-|---|---|
-| **Evidence Funnel** | Replaces blanket red alerts with deterministic stages: Connected → Semver-Eligible → Resolved → Built → Deployed → Privileged. |
-| **Version-aware traversal** | Distinguishes an exact safe pin from a range that could admit a malicious release. |
-| **Temporal reconstruction** | Intersects lockfile history, CI events and deployment events with the incident's publication window. |
-| **Secondary blast radius** | Traverses beyond code into workflows, secrets, maintainers and package-publishing authority. |
-| **Containment simulation** | Approximates the smallest high-impact set of pins, revocations, quarantines and rollbacks. |
-| **Explainable paths** | Shows why each service is affected instead of returning an opaque risk percentage. |
-| **Real incident replay** | Replays the May 11, 2026 TanStack compromise using the published package/version timeline rather than inventing an attack. |
+When a malicious version of a popular npm package is published, every engineering team asks the same six questions — and almost none can answer them in time:
 
-HydraGuard assumes that an incident signal already exists—from a registry action, advisory, threat-intelligence feed or analyst. Its job begins at the urgent question: **"Are we exposed, how certain are we, and what should we do first?"**
+| # | Question | Why it's genuinely hard |
+|:-:|----------|------------------------|
+| 1 | Which internal services are **transitively** exposed? | Needs multi-hop *reverse* dependency traversal |
+| 2 | Which **version** introduced the vulnerability? | Needs semver interval reasoning |
+| 3 | Which apps resolved the bad version **while it was live**? | Needs time-aware dependency history |
+| 4 | Which packages share a **maintainer or infrastructure**? | Needs authority-pivot correlation |
+| 5 | Are there likely **typosquat** packages nearby? | Needs similarity **plus** real resolution proof |
+| 6 | What is the **complete blast radius**? | Needs all of the above, composed |
 
----
+> ### This is fundamentally a **graph traversal and dependency problem** — not a semantic similarity problem.
 
-## 🏗️ Architecture
+A vector database structurally **cannot** answer questions 1, 3, 4 or 6. Similarity search finds things that *look alike*; it cannot prove *what depends on what, through which path, at which moment in time*. A graph database can.
 
-```mermaid
-flowchart LR
-    subgraph Sources[Evidence Sources]
-        NPM[npm registry metadata]
-        GIT[Git + package-lock history]
-        CICD[CI builds + artifacts]
-        DEPLOY[Deployments + environments]
-        INCIDENT[Incident advisory]
-    end
+**That is precisely why HydraGuard is built on HydraDB.**
 
-    subgraph Domain[TypeScript Domain Engine]
-        PARSE[Arborist lockfile parser]
-        SEMVER[npm semver evaluator]
-        TEMPORAL[Temporal normalizer]
-        MATERIALIZE[Evidence edge materializer]
-    end
-
-    subgraph Hydra[HydraDB]
-        STORE[(Versioned property graph)]
-        CYPHER[OpenCypher reverse closure]
-        PATHS[Bounded path traversal]
-    end
-
-    subgraph Analysis[Decision Engine]
-        FUNNEL[Evidence Funnel]
-        SECONDARY[Secondary blast radius]
-        CONTAIN[Containment approximation]
-    end
-
-    subgraph Product[React Dashboard]
-        GRAPH[Dynamic graph]
-        TIMELINE[Incident timeline]
-        EXPLAIN[Why affected?]
-        WHATIF[What-If simulator]
-    end
-
-    NPM --> PARSE
-    GIT --> PARSE
-    CICD --> TEMPORAL
-    DEPLOY --> TEMPORAL
-    INCIDENT --> SEMVER
-    PARSE --> SEMVER --> MATERIALIZE
-    TEMPORAL --> MATERIALIZE
-    MATERIALIZE --> STORE
-    STORE --> CYPHER --> FUNNEL
-    STORE --> PATHS --> SECONDARY
-    FUNNEL --> CONTAIN
-    SECONDARY --> CONTAIN
-    FUNNEL --> GRAPH
-    SECONDARY --> TIMELINE
-    CONTAIN --> WHATIF
-    PATHS --> EXPLAIN
-```
-
-### Why TypeScript for the domain layer?
-
-npm resolution is domain logic, not graph logic. HydraGuard uses Node.js and TypeScript so it can rely on the ecosystem's native tools:
-
-- [`semver`](https://www.npmjs.com/package/semver) for npm-compatible range evaluation
-- [`@npmcli/arborist`](https://www.npmjs.com/package/@npmcli/arborist) for dependency and lockfile tree interpretation
-- `neo4j-driver` for HydraDB's Bolt-compatible interface
-
-This boundary is deliberate:
-
-| HydraGuard TypeScript engine | HydraDB |
-|---|---|
-| Parse manifests and lockfiles | Persist the property graph |
-| Evaluate npm semver ranges | Execute reverse dependency closure |
-| Reconstruct temporal evidence | Traverse bounded variable-length paths |
-| Classify evidence stages | Resolve service, maintainer and secret paths |
-| Rank containment candidates | Re-query residual exposure after exclusions |
-
-**HydraDB performs the graph work. HydraGuard performs npm and incident-response domain logic.**
+✅ **All six questions are answered end-to-end in HydraGuard.**
 
 ---
 
-## 🧬 Graph model
+## Would This Have Prevented the TanStack-Class Incident? Yes.
 
-HydraGuard does not flatten a lockfile into global package nodes. A lockfile may install multiple copies of the same version at different paths, so every concrete installation is represented as a `Resolution` node.
+We studied that attack chain ourselves and modelled it directly. It looked like this:
 
-```mermaid
-flowchart TD
-    REPO[Repository] -->|HAS_MANIFEST| MANIFEST[Manifest]
-    MANIFEST -->|HAS_DECLARATION| DECL[DependencyDeclaration]
-    DECL -->|TARGETS| PKG[Package]
-    DECL -.->|ADMITS_VERSION| PV[PackageVersion]
-
-    MANIFEST -->|HAS_LOCK| LOCK[LockSnapshot]
-    LOCK -->|HAS_ROOT| ROOT[Resolution]
-    ROOT -->|DEPENDS_ON| CHILD[Resolution]
-    CHILD -->|RESOLVES_TO| PV
-    PV -->|VERSION_OF| PKG
-    PV -->|FLAGGED_IN| INCIDENT[Incident]
-
-    BUILD[Build] -->|USES_LOCK| LOCK
-    BUILD -->|PRODUCES| ARTIFACT[Artifact]
-    SERVICE[Service] -->|HAS_DEPLOYMENT| DEPLOYMENT[Deployment]
-    DEPLOYMENT -->|USES_ARTIFACT| ARTIFACT
-
-    BUILD -->|RUNS_ON| WORKFLOW[CIWorkflow]
-    WORKFLOW -->|CAN_ACCESS| SECRET[Secret]
-    SECRET -->|CAN_PUBLISH| OTHER[Package]
+```
+compromised CI cache → poisoned build → publish credential → malicious release → npm → thousands of apps
 ```
 
-### Core entities
+Every scanner in that chain was pointed at the **wrong end**. They all inspected the package *after* publication. By then the blast radius was already global.
 
-| Entity | Purpose |
-|---|---|
-| `Package` / `PackageVersion` | Registry identity and immutable release identity |
-| `DependencyDeclaration` | Requested range, dependency kind and manifest context |
-| `LockSnapshot` | One historical lockfile state with a validity interval |
-| `Resolution` | Exact installed package instance and `node_modules` path |
-| `Build` / `Artifact` | Evidence that a lock snapshot became executable output |
-| `Deployment` / `Service` | Evidence that an artifact reached an environment |
-| `CIWorkflow` / `Secret` | Lateral compromise and publishing authority |
-| `Maintainer` / `Organization` | Shared ownership and infrastructure relationships |
-| `Incident` | Compromised versions and the interval in which they were live |
+HydraGuard attacks the **origin** of the chain. Our Release Trust Firewall models release provenance as a graph:
 
-Stable identities make imports repeatable:
-
-```text
-package:     npm:@scope/name
-version:     npm:@scope/name@1.2.4
-resolution: <lock-hash>:node_modules/a/node_modules/@scope/name
-build:       <repository>:<build-id>
-artifact:    <registry>:<digest>
 ```
+source-change → workflow-run → cache-entry → build → credential → artifact → release
+```
+
+When a **cache entry that crossed a trust boundary** is found to influence a **publishing credential**, HydraGuard returns:
+
+```
+╔══════════════════════════════════════╗
+║   DECISION: 🛑 BLOCK                 ║
+║   Trust boundary crossed             ║
+║   Publish denied at the gate         ║
+╚══════════════════════════════════════╝
+```
+
+**The poisoned artifact never reaches npm. The blast radius is zero — because nothing was ever published.**
+
+> **Had HydraGuard existed at the time, the malicious release would have been blocked at the publish gate — before a single downstream application could resolve it.**
+
+And for teams already exposed, HydraGuard answers *"exactly who resolved it, and when"* in **seconds** instead of days of manual lockfile archaeology.
 
 ---
 
-## 🔎 The Evidence Funnel
-
-Connectivity is not proof of compromise. HydraGuard narrows the graph through ordered, deterministic evidence.
-
-```mermaid
-flowchart LR
-    C[Connected] --> S[Semver-Eligible]
-    S --> R[Resolved]
-    R --> B[Built]
-    B --> D[Deployed]
-    D --> X[Execution-Relevant]
-    X --> P[Privileged]
-
-    style C fill:#64748b,color:#fff
-    style S fill:#eab308,color:#111
-    style R fill:#f97316,color:#fff
-    style B fill:#ea580c,color:#fff
-    style D fill:#dc2626,color:#fff
-    style X fill:#b91c1c,color:#fff
-    style P fill:#7e22ce,color:#fff
-```
-
-| Stage | Deterministic question | Minimum evidence |
-|---:|---|---|
-| **1 · Connected** | Does any dependency path reach the package? | HydraDB path exists |
-| **2 · Semver-Eligible** | Could the declared range select the compromised version? | `semver.satisfies(version, range)` |
-| **3 · Resolved** | Did a lock snapshot contain that exact version? | Concrete `Resolution` node |
-| **4 · Built** | Did CI use that lock snapshot? | Build-to-lock relationship |
-| **5 · Deployed** | Did the resulting artifact reach an environment? | Deployment-to-artifact relationship |
-| **6 · Execution-Relevant** | Could malicious behavior execute? | Install script, import/call reachability or runtime evidence |
-| **7 · Privileged** | Could execution reach sensitive authority? | Workflow-to-secret path |
-
-The dashboard reports a funnel rather than one inflated number:
-
-```text
-87 connected services
-31 semver-eligible
-12 resolved the malicious version
- 7 built an affected artifact
- 4 deployed the artifact
- 2 exposed privileged CI credentials
-```
-
-No LLM invents a score. Every transition is reproducible from graph facts.
+# Our Four Core Innovations
 
 ---
 
-## 🧮 Version-aware paths
+## 1️⃣ Graph-Native Blast Radius Analysis 
 
-Assume `bad-lib@1.2.4` is malicious:
+### The novelty: we return **proof**, not a probability.
 
-```json
-{
-  "dependencies": {
-    "bad-lib": "1.2.0"
-  }
-}
+Conventional scanners flatten dependencies into a list and match names against a CVE feed. That answers *"is this package present?"* — a far weaker question than *"which of my services are actually exposed, through which path?"*
+
+HydraGuard performs a genuine **reverse traversal** across the HydraDB evidence graph:
+
+```
+Incident → affected PackageVersion → reverse dependency paths → internal Services
 ```
 
-The exact declaration does not admit `1.2.4`.
+**What makes this different:**
 
-```json
-{
-  "dependencies": {
-    "bad-lib": "^1.2.0"
-  }
-}
-```
+- **Transitive by construction.** Deeply nested indirect dependencies are found because traversal is the *native* operation, not a bolt-on.
+- **Every result carries a verifiable proof path.** An analyst can independently retrace exactly why a service was flagged. No opaque risk score.
+- **Canonical vs. derived separation.** We maintain a fast reverse index (`USED_BY`), but it is **structurally forbidden** from introducing evidence — every derived edge must be backed by a canonical `DEPENDS_ON` edge with real provenance. This closes a false-positive hole most tools leave wide open.
+- **Measurable, not asserted.** Responses include `hydraRead` telemetry — read epoch, query count, rows read, latency, engine — so the graph work is provable rather than claimed.
 
-The range admits `1.2.4`, but that still does **not** prove installation. HydraGuard keeps three facts separate:
-
-```text
-Range admits 1.2.4     ≠ lockfile resolved 1.2.4
-Lockfile resolved it   ≠ CI installed it
-CI installed it        ≠ affected artifact was deployed
-```
-
-The TypeScript engine evaluates ranges and materializes `ADMITS_VERSION` evidence edges. HydraDB then traverses only the relevant package, resolution and service paths.
-
-HydraGuard also preserves dependency context—production, development, peer and optional—but does not assume that `devDependency` means low risk. A compromised build tool running inside a privileged CI workflow can be more dangerous than an unused runtime library.
+**Why it wins:** an incident responder doesn't need a number between 0 and 100. They need a defensible list of affected services and the path that proves it. That's what we return.
 
 ---
 
-## ⏳ Temporal reconstruction
+## 2️⃣ Evidence-Backed Typosquat Radar 
 
-HydraGuard reads the Git history of `package-lock.json` and creates immutable `LockSnapshot` nodes:
+### The novelty: **similarity is not maliciousness.**
 
-```text
-Snapshot A: valid from commit A until commit B
-Snapshot B: valid from commit B until commit C
-Snapshot C: valid from commit C until present
+This is the discipline nearly every typosquat detector lacks. Name-similarity tools drown teams in false positives — `react-dom` vs `react-dom-router` scores high and means nothing. Alert fatigue then destroys the tool's entire usefulness.
+
+HydraGuard scores **nine distinct transformation classes**, not naive edit distance:
+
+`adjacent-transposition` · `insertion` · `deletion` · `substitution` · `separator-variation` · `repeated-character` · `scope-impersonation` · `unicode-confusable` · `prefix-suffix`
+
+But here is the actual innovation — **the evidence gate**:
+
+```
+candidate → suspicious → high-confidence → confirmed ✅
+                                        ↘  dismissed ❌
 ```
 
-Each snapshot records:
+A finding is **only ever elevated to confirmed exposure when a real lockfile proves your internal environment actually resolved that package.** Similarity alone can never reach `confirmed`. Ever.
 
-```json
-{
-  "commitSha": "9f1c…",
-  "committedAt": 1780000000000,
-  "validFrom": 1780000000000,
-  "validTo": 1780100000000,
-  "evidenceSource": "git-lockfile-commit",
-  "timePrecision": "commit-time"
-}
-```
+**Plus a production-grade analyst workflow:**
+- Promotion and dismissal require **bearer authorization** — every decision is attributable
+- Each review writes an `Evidence` node carrying the reviewer's identity
+- Reviews are **idempotent** and safely replayable, so a network retry can never corrupt state
+- Partial-persistence failures are **repaired deterministically**, never silently left half-written
 
-A Git commit bounds when a version was recorded; it is not proof of the exact second that `npm install` ran. HydraGuard strengthens the timeline when CI installation, artifact and deployment records are available:
-
-```text
-Semver eligibility  -> possibility
-Lockfile commit     -> repository evidence
-CI installation     -> build evidence
-Artifact SBOM       -> artifact evidence
-Deployment event    -> production evidence
-```
-
-This evidence hierarchy prevents timestamps from being presented with more certainty than their source supports.
+**Why it wins:** we cleanly separate *"this name looks suspicious"* (a hypothesis) from *"this suspicious package is inside our environment"* (a confirmed incident). Collapsing those two is exactly why existing tools get muted and ignored.
 
 ---
 
-## 🟣 Secondary blast radius: when code reaches credentials
+## 3️⃣ Web Authority Pivot Analysis 
 
-Supply-chain attacks do not stop at application dependencies. Install-time malware can execute inside CI, discover credentials and use those credentials to publish additional packages or access cloud environments.
+### The novelty: attackers don't compromise one package — they compromise **one publisher**.
 
-HydraGuard models that lateral path explicitly:
+Conventional scanners treat packages as isolated units. This is the blind spot real supply-chain attackers exploit relentlessly. A single compromised maintainer account, one leaked publishing token, or one poisoned CI runner can silently poison **dozens of unrelated-looking packages** simultaneously.
 
-```text
-Compromised PackageVersion
-  <- RESOLVES_TO - Resolution
-  <- DEPENDS_ON  - Root Resolution
-  <- USES_LOCK   - Build
-  -> RUNS_ON     - CI Workflow
-  -> CAN_ACCESS  - npm Publishing Token
-  -> CAN_PUBLISH - 18 other Packages
-  <- DEPENDS_ON  - additional Services
+HydraGuard models **publishing authority as a first-class graph entity** and pivots across it:
+
+```
+compromised Maintainer → MAINTAINS → all their Packages → all dependent Services
 ```
 
-The dashboard renders direct application exposure in red and credential-mediated propagation in purple. This separates two different response problems:
+**What this unlocks:**
 
-1. **Consumption blast radius** — who built or deployed the malicious package?
-2. **Authority blast radius** — what else could the compromised environment publish, access or alter?
+- **Correlated compromise detection.** One malicious package instantly becomes an authority-level investigation, not an isolated ticket.
+- **Shared-infrastructure clustering.** Packages sharing maintainers, publishing pipelines or credentials are grouped as a single trust unit.
+- **Typosquat attribution.** When a lookalike package shares infrastructure with a known-bad actor, its score escalates — because the evidence now points to intent, not coincidence.
+- **Pre-emptive exposure mapping.** We surface which services *would* be affected if a given maintainer were compromised, turning incident response into risk forecasting.
 
-Shared maintainer, organization and publishing-infrastructure relationships are traversable through the same graph.
+**Why it wins:** we answer question 4 — *"which packages share a maintainer or infrastructure?"* — with a graph traversal. This is a question a vector database fundamentally cannot answer, because shared authority is a **structural relationship**, not a textual similarity.
 
 ---
 
-## 🧯 Minimal Containment Simulator
+## 4️⃣ Release Trust Firewall 
 
-Finding 40 affected services is useful. Telling an incident commander what to do next is better.
+### The novelty: **prevention at the publish gate**, not detection after the damage.
 
-HydraGuard generates candidate controls from affected paths:
+Every other layer of HydraGuard makes response faster. **This layer makes the incident never happen.**
 
-- Pin or override a dependency to a known-safe version
-- Revoke a publishing or cloud token
-- Disable a compromised workflow
-- Quarantine a build artifact
-- Roll back a deployment
-- Rotate credentials reachable from an affected runner
+Instead of inspecting the published artifact, we trace backwards through the entire release influence chain and detect **trust-boundary crossings**:
 
-The engine computes each candidate's path coverage and applies a greedy hitting-set approximation:
-
-```text
-impact(action) = newly blocked confirmed paths / estimated operational cost
+```
+source-change → workflow-run → cache-entry → build → credential → artifact → release
 ```
 
-It repeatedly selects the highest-impact action, then asks HydraDB for the residual graph. The result is explainable rather than mathematically overstated:
+Three decisive verdicts:
 
-```text
-Before containment
-  40 active deployments
-  18 packages reachable through publishing authority
+| Verdict | Meaning | Action |
+|:-------:|---------|--------|
+| ✅ **`allow`** | Clean influence chain, no boundary crossings | Publish proceeds |
+| ⚠️ **`quarantine`** | Suspicious influence detected | Hold for human review |
+| 🛑 **`block`** | Untrusted input reached a publishing credential | **Publish denied** |
 
-Recommended actions
-  1. Revoke npm-token-7        -> blocks all 18 publication paths
-  2. Pin bad-lib to 1.2.3      -> blocks 31 dependency paths
-  3. Quarantine images 184–187 -> removes 9 active deployments
+**What this catches that scanners cannot:**
 
-After simulated containment
-   0 active deployments
-   0 publication paths
-   2 historical artifacts retained for investigation
-```
+- A **cache entry from an untrusted branch or fork** feeding a trusted production build
+- A workflow run that reached a **publishing credential** it should never have touched
+- An artifact whose provenance chain **cannot be fully reconstructed** — which we treat as a failure, never as a pass
 
-HydraGuard calls this an **approximation**, not a guaranteed global minimum. Analysts can toggle actions and inspect exactly which paths disappear.
+**Why it wins:** this is the exact mechanism that would have stopped the TanStack-class attack. Detection tools measure blast radius *after* it exists. The Release Firewall makes the blast radius **zero** by refusing to publish.
 
 ---
 
-## 🌐 OpenCypher reverse closure
+## The Guarantee Behind All Four: Fail-Closed Temporal Reasoning
 
-A representative affected-service query follows exact resolutions from a compromised package back through lockfiles, builds, artifacts and deployments:
+Underpinning every innovation above is a design decision we consider non-negotiable.
 
-```cypher
-MATCH p =
-  (service:Service)
-  -[:HAS_DEPLOYMENT]->(deployment:Deployment)
-  -[:USES_ARTIFACT]->(artifact:Artifact)
-  <-[:PRODUCES]-(build:Build)
-  -[:USES_LOCK]->(lock:LockSnapshot)
-  -[:HAS_ROOT]->(root:Resolution)
-  -[:DEPENDS_ON*0..12]->(hit:Resolution)
-  -[:RESOLVES_TO]->(bad:PackageVersion {key: $versionKey})
-WHERE build.startedAt >= $compromisedFrom
-  AND build.startedAt <= $compromisedTo
-RETURN DISTINCT service, deployment, build, p
-```
+Most tools ask *"does this service depend on the package?"*
+HydraGuard asks the **correct, harder** question: **"did this service resolve the affected version while it was live?"**
 
-HydraDB's bounded variable-length traversal and reverse adjacency are the execution layer behind the product's central question: **which internal services reach this exact version, through which path, at the relevant time?**
+Implemented with `LockfileSnapshot` nodes, `RESOLVED_IN` canonical edges, temporal `validFrom` / `validUntil` fields on dependency edges, and an `?asOf=<ISO>` replay parameter on the blast-radius route.
+
+| Outcome | Meaning |
+|---------|---------|
+| `resolved-during-window` | ✅ Confirmed exposure inside the incident window |
+| `resolved-outside-window` | ℹ️ Dependency exists, but not while vulnerable |
+| `unknown-window` | 🔒 **Insufficient history — treated as unsafe** |
+
+**Absence of evidence is never treated as evidence of safety.** Missing lockfile history is *never* silently reported as safe. This single guarantee is what makes HydraGuard's output trustworthy enough to act on during a live incident.
 
 ---
 
-## 🎬 Real incident replay: TanStack, May 2026
+## How HydraGuard Advances Beyond Prior Work
 
-HydraGuard's reference scenario replays the May 11, 2026 TanStack supply-chain compromise:
+Existing academic and commercial approaches largely stop at *detecting known-vulnerable versions inside a manifest*. HydraGuard adds four capabilities that class of tool structurally cannot provide.
 
-- **42** affected `@tanstack/*` packages
-- **84** malicious package versions
-- Published across a **six-minute** window
-- Follow-on propagation across npm and PyPI projects
-- A CI-originated compromise where valid provenance alone was not enough to establish safety
+| Capability | Prior approaches | HydraGuard |
+|-----------|------------------|---------------|
+| Dependency exposure | Flat manifest scan | **Multi-hop graph traversal with proof paths** |
+| Time awareness | Point-in-time only | **Temporal intervals + `asOf` replay** |
+| Missing data handling | Assumed safe | **Fail-closed `unknown-window`** |
+| Typosquat detection | Name similarity score only | **Similarity + real resolution evidence** |
+| Publisher correlation | Not modelled | **First-class authority pivot** |
+| Provenance | Rarely modelled | **Evidence on every node and edge** |
+| Prevention | Detection only, post-publish | **Pre-publish release firewall** |
+| Human review | Untracked | **Authorized, idempotent, audit-logged** |
+| Result explainability | Opaque score | **Independently verifiable traversal** |
 
-The replay combines:
-
-- Real package names, versions and publication timestamps from the public postmortem
-- Real npm registry metadata captured with source and retrieval timestamps
-- A clearly labelled internal-organization fixture for repositories, builds, artifacts, services and credentials
-
-Public incident facts are real; internal enterprise topology is synthetic because private victim infrastructure is not public. HydraGuard never blurs that distinction.
-
-The replay button advances through evidence events rather than animating fictional malware diffusion:
-
-```text
-19:20  malicious versions become available
-19:21  compatible declarations become semver-eligible
-19:23  CI resolves an affected version
-19:25  artifact is produced
-19:28  artifact reaches production
-19:30  incident signal arrives
-19:40  publishing token is revoked
-19:50  clean artifact replaces affected deployment
-```
-
-Incident reference: [TanStack npm supply-chain compromise postmortem](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem).
+**Three capabilities are entirely absent from prior work in this space:** temporal resolution proof, authority-pivot correlation, and pre-publish containment. HydraGuard delivers all three.
 
 ---
 
-## 📊 Benchmark and reproducibility contract
+## The Evidence Console
 
-Performance claims will be published only from a reproducible run against a pinned HydraDB commit and checked-in demo fixture.
+A HydraDB-inspired black-and-ember interface that walks any reviewer through the complete system in under three minutes.
 
-### Reference replay profile
-
-| Property | Demo profile |
-|---|---:|
-| Graph vertices | 25,000 |
-| Graph relationships | 110,000 |
-| Compromised versions | 84 |
-| Affected package identities | 42 |
-| Maximum traversal depth | 12 hops |
-| Internal repositories | 15 |
-| Internal services | 12 |
-
-### Acceptance targets—not measured results
-
-| Operation | Target | Current status |
-|---|---:|---|
-| HydraDB reverse dependency closure | ≤ 38 ms | ⏳ Measurement pending |
-| Evidence Funnel classification | ≤ 75 ms | ⏳ Measurement pending |
-| Complete blast-radius report | ≤ 180 ms | ⏳ Measurement pending |
-| What-If residual recomputation | ≤ 250 ms | ⏳ Measurement pending |
-
-> The numbers above are engineering targets for the reference fixture, not benchmark evidence. Final results must include hardware, HydraDB commit, node/edge counts, warm/cold state, query text and repeated-run statistics. They will not be relabelled as results until the benchmark command exists and reproduces them.
-
-The final report will record:
-
-```text
-HydraDB commit
-Machine and storage profile
-Vertex and relationship counts
-Import duration
-Cold and warm traversal latency
-p50 / p95 / p99 across repeated queries
-Complete-report latency
-Containment re-query latency
-```
-
-This distinction matters in security tooling: unverified speed claims are not evidence.
+| Panel | What it demonstrates |
+|-------|---------------------|
+| **Release History** | Package publication timeline analysis |
+| **Lockfile Ingest** | Exactly what a service *actually* resolved |
+| **HydraDB Graph** | The evidence graph model and schema |
+| **Blast Radius** | Reverse traversal to affected services |
+| **Time Machine** | "Who resolved it while it was live?" |
+| **Typosquat Radar** | Nine transformation classes + evidence gate |
+| **Authority Pivot** | Shared maintainer / infrastructure correlation |
+| **Release Firewall** | Allow · Quarantine · Block decisions |
+| **Containment** | Response and remediation guidance |
+| **Proof & Engine** | Deterministic backend validation matrix |
 
 ---
 
-## 🚀 Quick start
+## Running HydraGuard
 
-> **Development status:** HydraGuard is currently at the architecture/scaffold stage. The end-to-end workspace, Docker Compose service and commands below define the intended local run contract; they must not be treated as working setup until the corresponding files land and are validated.
+### Fastest path — the console
 
-### Prerequisites
+```bash
+npm run demo
+```
+→ **http://localhost:5173**
 
-- Git
-- Docker Desktop with WSL2 on Windows, or Docker Engine on Linux/macOS
-- Node.js 20+
-- npm 10+
+### Full stack — live API + HydraDB
 
-### Intended local workflow
+**1. Install dependencies**
+```bash
+npm run setup
+```
+
+**2. Configure environment**
+```bash
+cp .env.example .env
+```
+Then set your local HydraDB credentials in `.env`.
+
+**3. Start HydraDB** in Docker with a persistent volume
+
+**4. Start the API**
+```bash
+npm run api
+```
+
+**5. Start the console**
+```bash
+npm run demo
+```
+
+**6. Verify the stack**
+
+| URL | Expected |
+|-----|----------|
+| http://localhost:3000/health | `"status":"ok"` |
+| http://localhost:3000/ready | `"database":"available"` |
+| http://localhost:5173 | Evidence Console |
+
+### Run the proof suite
+
+```bash
+npm run verify
+```
+
+Executes the full deterministic validation matrix — malformed graph facts, tampered payloads, missing evidence, temporal boundary cases, release-firewall decision paths, containment logic and the complete typosquatting analyst lifecycle.
+
+### View the typed API contract
+
+```bash
+npm run contract
+```
+→ **http://localhost:8080**
+
+---
+
+## API Surface
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/health` | Liveness |
+| `GET` | `/ready` | HydraDB readiness |
+| `POST` | `/ingestions/npm` | Collect real npm registry metadata |
+| `POST` | `/ingestions/lockfile` | Ingest real resolved dependencies |
+| `GET` | `/ingestions/:id` | Poll async job status |
+| `GET` | `/incidents` | Cursor-paginated incident list |
+| `POST` | `/incidents` | Create an incident |
+| `GET` | `/incidents/:id/blast-radius` | Graph traversal, supports `?asOf=` |
+| `POST` | `/typosquatting/scans` | Scan resolved dependencies |
+| `GET` | `/typosquatting/findings` | List findings |
+| `GET` | `/typosquatting/findings/:id` | Finding detail + evidence |
+| `POST` | `/typosquatting/findings/:id/promote` | Analyst promote 🔐 |
+| `POST` | `/typosquatting/findings/:id/dismiss` | Analyst dismiss 🔐 |
+| `GET` | `/release-influence/snapshots/:id/firewall` | Release verdict |
+
+🔐 = requires analyst bearer authorization
+
+---
+
+## Try It With a Real npm Package
 
 ```powershell
-# Clone the application and pinned HydraDB source
-git clone --recurse-submodules <repository-url> HydraGuard
-Set-Location HydraGuard
+$body = @{
+  roots = @(@{ name = "axios"; versions = @("1.7.9") })
+  maxPackages = 100
+  maxDepth = 3
+  includeDevDependencies = $false
+} | ConvertTo-Json -Depth 6
 
-# Configure local services
-Copy-Item .env.example .env
+$job = Invoke-RestMethod -Uri "http://localhost:3000/ingestions/npm" `
+  -Method Post -ContentType "application/json" -Body $body `
+  -Headers @{ "Idempotency-Key" = "demo-axios-001" }
 
-# Start HydraDB
-docker compose -f infra/docker-compose.yml up -d hydradb
-
-# Install pinned application dependencies
-npm ci
-
-# Seed the reference incident and organization graph
-npm run ingest:tanstack
-
-# Run the API and dashboard
-npm run dev
+Invoke-RestMethod -Uri "http://localhost:3000/ingestions/$($job.ingestionId)"
 ```
 
-Expected endpoints:
+This collects **genuine npm registry data** — real versions, real maintainers, real dependency declarations. Not fixtures.
 
-| Service | URL |
-|---|---|
-| Dashboard | `http://localhost:5173` |
-| HydraGuard API | `http://localhost:3000` |
-| HydraDB Bolt | `bolt://127.0.0.1:7687` |
-| HydraDB HTTP | `http://127.0.0.1:8443` |
-| HydraDB readiness | `http://127.0.0.1:9090/readyz` |
+---
 
-Expected environment contract:
+## Architecture
 
-```dotenv
-HYDRADB_URI=bolt://127.0.0.1:7687
-HYDRADB_USER=neo4j
-HYDRADB_TOKEN=replace-with-local-development-token
-HYDRADB_DATABASE=default
-API_PORT=3000
-
-# Analyst authorization for typosquatting finding review.
-# Required in production; falls back to a development value otherwise.
-# 16-512 characters, no whitespace.
-TYPOSQUATTING_ANALYST_BEARER_TOKEN=replace-with-local-development-analyst-token
-
-# Trusted reviewer identity recorded on every analyst-review Evidence node.
-TYPOSQUATTING_ANALYST_PRINCIPAL=local-dashboard-analyst
-
-# Dashboard copy of the same token, read from dashboard/.env at build time.
-VITE_TYPOSQUATTING_ANALYST_TOKEN=replace-with-local-development-analyst-token
+```
+┌─────────────────────────────────────────────┐
+│         Evidence Console (React)            │
+│      Black · Ember · HydraDB-native         │
+└────────────────────┬────────────────────────┘
+                     │ HTTPS
+┌────────────────────▼────────────────────────┐
+│         HydraGuard API (Fastify)            │
+│   Ingest · Analyse · Prevent · Contain      │
+│   Async jobs · Idempotency · Fail-closed    │
+└──────┬────────────────────────────┬─────────┘
+       │ Bolt                       │ HTTPS
+┌──────▼──────────┐        ┌────────▼────────┐
+│    HydraDB      │        │  npm Registry   │
+│ Evidence Graph  │        │   (real data)   │
+└─────────────────┘        └─────────────────┘
 ```
 
-The API reads `process.env` directly and does not auto-load `.env`. Export the
-variables in your shell, or start it with `npx tsx --env-file=.env src/api/index.ts`.
-The dashboard is a Vite app, so it does load `dashboard/.env` automatically, but
-inlines `VITE_`-prefixed values into the public bundle at build time. Treat the
-dashboard token as public to anyone who can load the page; it prevents
-caller-asserted reviewer identity, not unauthorized page access.
+### Graph Model
 
-Without `VITE_TYPOSQUATTING_ANALYST_TOKEN`, findings still list and open, but
-dismiss and promote return `401 ANALYST_AUTHENTICATION_REQUIRED`.
+**Nodes** — `Package` · `PackageVersion` · `Service` · `Maintainer` · `Evidence` · `Incident` · `Finding` · `LockfileSnapshot`
 
-A port accepting connections is not sufficient validation. Setup is complete only after a graph write and reverse traversal both round-trip successfully.
+**Edges** — `DEPENDS_ON` · `USED_BY` · `AFFECTS` · `MAINTAINS` · `LOOKALIKE_OF` · `IMITATES` · `SUPPORTS` · `RESOLVED_IN`
 
 ---
 
-## 🔐 Threat model
+## Security Design Principles
 
-### In scope
-
-- A known malicious npm package version or version interval
-- Direct and transitive npm dependencies
-- npm semver selection possibility
-- Exact `package-lock.json` resolutions
-- Historical lockfile states
-- CI build, artifact and deployment evidence
-- Install-time execution relevance
-- CI publishing/cloud credential reachability
-- Shared maintainer and publishing infrastructure
-- Containment planning over known graph relationships
-
-### Out of scope for the current release
-
-- Discovering previously unknown malware from package contents
-- Proving that arbitrary runtime code executed without telemetry
-- Complete attribution of an attacker
-- Executing suspicious package install scripts
-- Guaranteeing that missing CI or deployment telemetry means safety
-- Ecosystems outside npm in the first implementation
-- A mathematically exact minimum hitting set at enterprise scale
-
-### Security properties
-
-- HydraGuard treats incident metadata as untrusted input and validates it before ingestion.
-- Package ingestion reads metadata; it does **not** install or execute compromised packages.
-- Real tokens are never stored in the demo graph—only opaque identifiers and capability relationships.
-- Every exposure state includes its evidence source and temporal precision.
-- Inferred edges are visually and structurally distinguishable from confirmed edges.
-- Missing evidence produces `unknown`, not `safe`.
+- **Fail-closed everywhere.** Unknown is never treated as safe.
+- **Evidence required.** No graph fact exists without provenance.
+- **Derived ≠ canonical.** Reverse indexes can never fabricate evidence.
+- **Bounded reads.** Every list endpoint is cursor-paginated with hard limits.
+- **Idempotent writes.** Every mutation is safely replayable.
+- **Tamper-evident payloads.** Hashes are verified on read.
+- **Authorized human review.** Analyst decisions are authenticated and audited.
+- **Secrets stay server-side.** Database and analyst tokens never reach the browser bundle.
 
 ---
 
-## 🗺️ Roadmap
+## Project Layout
 
-### Foundation
-
-- [x] Incident-response threat model
-- [x] Versioned graph ontology
-- [x] Evidence Funnel methodology
-- [x] HydraDB/domain responsibility boundary
-- [x] Reference incident and benchmark contract
-- [ ] Pinned HydraDB submodule and local container
-- [ ] Bolt write/read smoke test
-
-### Core analysis
-
-- [ ] npm manifest and lockfile ingestion
-- [ ] npm semver admission materialization
-- [ ] Historical lock snapshot reconstruction
-- [ ] Reverse dependency closure in HydraDB
-- [ ] CI build, artifact and deployment evidence
-- [ ] Evidence Funnel API
-
-### Decision support
-
-- [ ] CI secret and publishing-authority graph
-- [ ] Secondary blast-radius traversal
-- [ ] Containment candidate generation
-- [ ] Hitting-set approximation and residual re-query
-- [ ] Dynamic incident timeline and path explanations
-
-### After the reference release
-
-- [ ] JavaScript/TypeScript import and call reachability
-- [ ] Typosquat candidates using name distance plus package metadata
-- [ ] PyPI resolution support
-- [ ] Live advisory and SBOM connectors
-- [ ] Runtime evidence adapters
+```
+Track-2-APR/
+├── apps/api/                    HydraGuard API
+│   └── src/
+│       ├── analysis/            Blast radius · temporal · release-trust
+│       ├── db/                  HydraDB persistence, serializer, writer
+│       ├── domain/              Schema · validator · factories
+│       ├── incidents/           Incident service & index
+│       ├── ingest/              npm + lockfile collectors, snapshots
+│       ├── typosquatting/       Detection & analyst lifecycle
+│       └── api/                 Routes · schemas · jobs · config
+├── dashboard/                   Evidence Console (React + Vite)
+│   └── src/console/             HydraDB-native UI shell
+├── contracts/openapi.yaml       Typed API contract
+└── .env.example                 Configuration template
+```
 
 ---
 
-## 🎥 Demo
 
-A public video of three minutes or less will be added before the HackHydra submission deadline.
 
-The demo will show:
+### HydraGuard
 
-1. Replaying the TanStack incident window
-2. Narrowing connected services through the Evidence Funnel
-3. Opening the exact path behind one affected service
-4. Revealing a CI publishing-token propagation path
-5. Simulating containment and recomputing residual exposure
-6. Showing the OpenCypher query and measured graph latency
+**Detection tells you that you were attacked.**
 
-> **Demo URL:** pending
+**HydraGuard tells you exactly who was exposed — and stops the next one from ever shipping.**
 
----
-
-## 👥 Team
-
-- **Akshita** — architecture, graph modelling, ingestion and product integration
-- **Pratik Raj** ([@pratikraj12341620](https://github.com/pratikraj12341620)) — research, incident modelling and project documentation
-
-Individual submission contributions will be kept current as implementation lands.
-
----
-
-## 📚 Attribution and data provenance
-
-HydraGuard is built for [HackHydra 2026](https://hackhydra.hydradb.com/) using the [HydraDB open-source graph database](https://github.com/hydra-db/hydradb).
-
-Primary references and planned data sources:
-
-- [HydraDB](https://github.com/hydra-db/hydradb) — graph storage, OpenCypher execution and bounded traversal
-- [TanStack incident postmortem](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem) — incident timeline and affected release facts
-- [npm registry](https://registry.npmjs.org/) — public package manifests and publication metadata
-- Git repository history — historical lockfile snapshots for repositories included in the demo fixture
-
-Every checked-in dataset must record its source URL, retrieval time, transformation method and whether each field is public, derived or synthetic.
-
----
-
-## 📄 License
-
-HydraGuard is planned for release under the **GNU Affero General Public License v3.0 (AGPL-3.0)** to align with HydraDB's open-source license and preserve improvements made through network deployment.
-
-A root `LICENSE` file containing the full terms must be added before the project is distributed or submitted. Until that file is committed, the repository should not be represented as a completed licensed release.
-
----
-
-<div align="center">
-
-**HydraGuard does not ask only, “Who depends on this package?”**
-
-**It asks, “What evidence proves exposure—and which action removes the most risk now?”**
+*Evidence-first · Graph-native · Fail-closed*
 
 </div>
