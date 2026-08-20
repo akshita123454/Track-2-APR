@@ -1,4 +1,5 @@
 import type {
+  IncidentListResponse,
   LiveBlastRadiusResponse,
   TyposquattingFindingDetailResponse,
   TyposquattingFindingListResponse,
@@ -133,4 +134,16 @@ export async function reviewTyposquattingFinding(
       body: JSON.stringify(input),
     }
   ));
+}
+
+export async function fetchIncidents(
+  options?: { readonly limit?: number; readonly signal?: AbortSignal }
+): Promise<IncidentListResponse> {
+  const url = apiUrl('/incidents');
+  url.searchParams.set('limit', String(options?.limit ?? 50));
+
+  return readApiResponse<IncidentListResponse>(await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: options?.signal,
+  }));
 }

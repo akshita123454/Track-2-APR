@@ -154,13 +154,17 @@ function createDriver(state: MemoryState): Driver {
           return { records: versions };
         }
 
-        if (query.includes("UNWIND $rows AS row") && query.includes("MATCH (n:Evidence")) {
-          const rows = parameters.rows as readonly { readonly vertex: number }[];
+        /*
+         * Evidence is read one node per statement because HydraDB cannot
+         * execute a batched UNWIND read or an `id IN $ids` predicate.
+         */
+        if (query.includes("MATCH (n:Evidence {id: $node_id})")) {
+          const node = state.nodes.get(parameters.node_id as number);
           return {
-            records: rows.flatMap(({ vertex }) => {
-              const node = state.nodes.get(vertex);
-              return node?.kind === "Evidence" ? [projectedNode(node, "evidence")] : [];
-            }),
+            records:
+              node?.kind === "Evidence"
+                ? [projectedNode(node, "evidence")]
+                : [],
           };
         }
 

@@ -352,6 +352,55 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /incidents:
+    get:
+      tags: [Incidents]
+      operationId: listIncidents
+      summary: List persisted incidents
+      description: >
+        Bounded, newest-first incident index ordered by (observedAt, id)
+        descending. affectedVersionCount counts canonical AFFECTS targets only
+        and does not assert that any dependent service was exposed.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursorObservedAt
+          in: query
+          required: false
+          description: Must be supplied together with cursorId.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+        - name: cursorId
+          in: query
+          required: false
+          description: Must be supplied together with cursorObservedAt.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+      responses:
+        "200":
+          description: A bounded page of incidents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: The incident index is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
     post:
       tags: [Incidents]
       operationId: createIncident
@@ -1093,6 +1142,80 @@ components:
         executionObserved:
           type: integer
           minimum: 0
+
+    IncidentListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - incidentId
+        - logicalId
+        - title
+        - status
+        - intervalStart
+        - intervalEnd
+        - affectedVersionCount
+        - synthetic
+        - observedAt
+      properties:
+        incidentId:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        logicalId:
+          type: string
+          pattern: '^incident:[^\s]+$'
+          maxLength: 1024
+        title:
+          type: string
+          minLength: 1
+          maxLength: 300
+        status:
+          type: string
+          enum: [draft, active, contained, closed]
+        intervalStart:
+          type: string
+          format: date-time
+        intervalEnd:
+          description: Null means the compromise interval is still open.
+          nullable: true
+          type: string
+          format: date-time
+        affectedVersionCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        synthetic:
+          type: boolean
+        observedAt:
+          type: string
+          format: date-time
+
+    IncidentListResponse:
+      type: object
+      additionalProperties: false
+      required: [incidents, truncated, nextCursor]
+      properties:
+        incidents:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/IncidentListItem"
+        truncated:
+          type: boolean
+        nextCursor:
+          nullable: true
+          type: object
+          additionalProperties: false
+          required: [cursorObservedAt, cursorId]
+          properties:
+            cursorObservedAt:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            cursorId:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
 
     HydraGuardEvidenceIds:
       type: array

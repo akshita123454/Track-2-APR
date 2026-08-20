@@ -923,32 +923,17 @@ class FakeHydraReadStore {
     parameters:
       Readonly<UnknownRecord>,
   ): FakeResult {
-    const rawRows =
-      parameters.rows;
-
-    assert.ok(
-      Array.isArray(rawRows),
-      "get-evidence rows must be an array",
-    );
-
-    const requestedIds =
-      rawRows
-        .map((entry, index) => {
-          const row =
-            requireRecord(
-              entry,
-              `rows[${index}]`,
-            );
-
-          return requireSafeInteger(
-            row.vertex,
-            `rows[${index}].vertex`,
-          );
-        })
-        .sort(
-          (left, right) =>
-            left - right,
-        );
+    /*
+     * Evidence is read one node per statement, because HydraDB restricts
+     * UNWIND batches to one-hop relationship patterns and accepts composite
+     * parameters only as UNWIND input.
+     */
+    const requestedIds = [
+      requireSafeInteger(
+        parameters.node_id,
+        "node_id",
+      ),
+    ];
 
     const records =
       requestedIds

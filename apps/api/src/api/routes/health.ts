@@ -241,8 +241,13 @@ async function checkDatabase(
     database.session();
 
   try {
+    /*
+     * The label is required: HydraDB cannot execute an unlabelled full scan,
+     * so a bare MATCH (n) would report the database as unavailable even when
+     * it is healthy.
+     */
     await session.run(
-      "MATCH (n) RETURN n.id AS id LIMIT 1",
+      "MATCH (n:Evidence) RETURN n.id AS id LIMIT 1",
       {},
       {
         timeout: timeoutMs,

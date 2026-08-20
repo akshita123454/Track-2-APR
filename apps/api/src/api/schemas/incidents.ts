@@ -389,3 +389,240 @@ export const CREATE_INCIDENT_ROUTE_SCHEMA = {
       ERROR_RESPONSE_REF,
   },
 } as const;
+
+/**
+ * Incident index limits.
+ *
+ * The list endpoint exists so an analyst never has to guess a numeric
+ * incident ID. It stays bounded because the underlying read counts canonical
+ * AFFECTS targets per returned incident.
+ */
+export const INCIDENT_LIST_LIMITS = {
+  defaultLimit: 50,
+  maxLimit: 200,
+} as const;
+
+export const INCIDENT_LIST_STATUSES = [
+  "draft",
+  "active",
+  "contained",
+  "closed",
+] as const;
+
+export interface IncidentListQuerystring {
+  readonly limit?: number;
+
+  /**
+   * Both cursor components are required together. They are validated as a
+   * pair by the route because JSON Schema cannot express the dependency
+   * cleanly across query parameters.
+   */
+  readonly cursorObservedAt?: number;
+  readonly cursorId?: number;
+}
+
+export interface IncidentListItemResponse {
+  readonly incidentId: number;
+  readonly logicalId: string;
+  readonly title: string;
+  readonly status:
+    (typeof INCIDENT_LIST_STATUSES)[number];
+  readonly intervalStart: string;
+  readonly intervalEnd: string | null;
+  readonly affectedVersionCount: number;
+  readonly synthetic: boolean;
+  readonly observedAt: string;
+}
+
+export interface IncidentListResponse {
+  readonly incidents:
+    readonly IncidentListItemResponse[];
+  readonly truncated: boolean;
+
+  readonly nextCursor:
+    | {
+        readonly cursorObservedAt: number;
+        readonly cursorId: number;
+      }
+    | null;
+}
+
+const INCIDENT_LIST_ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+
+  required: [
+    "incidentId",
+    "logicalId",
+    "title",
+    "status",
+    "intervalStart",
+    "intervalEnd",
+    "affectedVersionCount",
+    "synthetic",
+    "observedAt",
+  ],
+
+  properties: {
+    incidentId: {
+      type: "integer",
+      minimum: 0,
+      maximum: MAX_SAFE_INTEGER,
+    },
+
+    logicalId: {
+      type: "string",
+      minLength: "incident:x".length,
+      maxLength: 1_024,
+      pattern: "^incident:[^\\s]+$",
+    },
+
+    title: {
+      type: "string",
+      minLength: 1,
+      maxLength:
+        INCIDENT_LIMITS.maxTitleLength,
+    },
+
+    status: {
+      type: "string",
+      enum: INCIDENT_LIST_STATUSES,
+    },
+
+    intervalStart: {
+      type: "string",
+      format: "date-time",
+    },
+
+    intervalEnd: {
+      anyOf: [
+        {
+          type: "string",
+          format: "date-time",
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
+
+    affectedVersionCount: {
+      type: "integer",
+      minimum: 0,
+      maximum: MAX_SAFE_INTEGER,
+    },
+
+    synthetic: {
+      type: "boolean",
+    },
+
+    observedAt: {
+      type: "string",
+      format: "date-time",
+    },
+  },
+} as const;
+
+export const INCIDENT_LIST_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+
+  required: [
+    "incidents",
+    "truncated",
+    "nextCursor",
+  ],
+
+  properties: {
+    incidents: {
+      type: "array",
+      maxItems:
+        INCIDENT_LIST_LIMITS.maxLimit,
+      items: INCIDENT_LIST_ITEM_SCHEMA,
+    },
+
+    truncated: {
+      type: "boolean",
+    },
+
+    nextCursor: {
+      anyOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+
+          required: [
+            "cursorObservedAt",
+            "cursorId",
+          ],
+
+          properties: {
+            cursorObservedAt: {
+              type: "integer",
+              minimum: 0,
+              maximum: MAX_SAFE_INTEGER,
+            },
+
+            cursorId: {
+              type: "integer",
+              minimum: 0,
+              maximum: MAX_SAFE_INTEGER,
+            },
+          },
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
+  },
+} as const;
+
+export const INCIDENT_LIST_QUERYSTRING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+
+  properties: {
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum:
+        INCIDENT_LIST_LIMITS.maxLimit,
+      default:
+        INCIDENT_LIST_LIMITS.defaultLimit,
+    },
+
+    cursorObservedAt: {
+      type: "integer",
+      minimum: 0,
+      maximum: MAX_SAFE_INTEGER,
+    },
+
+    cursorId: {
+      type: "integer",
+      minimum: 0,
+      maximum: MAX_SAFE_INTEGER,
+    },
+  },
+} as const;
+
+/**
+ * GET /incidents
+ *
+ * Returns a bounded, newest-first incident index. This is a read-only
+ * projection: it never asserts exposure, and affectedVersionCount counts
+ * canonical AFFECTS targets only.
+ */
+export const LIST_INCIDENTS_ROUTE_SCHEMA = {
+  querystring:
+    INCIDENT_LIST_QUERYSTRING_SCHEMA,
+
+  response: {
+    200:
+      INCIDENT_LIST_RESPONSE_SCHEMA,
+
+    400: ERROR_RESPONSE_REF,
+    503: ERROR_RESPONSE_REF,
+    500: ERROR_RESPONSE_REF,
+  },
+} as const;

@@ -8,6 +8,10 @@ import type {
   PersistedReleaseFirewallRunner,
 } from "./routes/analysis.js";
 
+import type {
+  LiveAnalysisOptions,
+} from "../analysis/live-analysis.js";
+
 import {
   ReleaseInfluenceStoreError,
 } from "../analysis/release-trust/hydra-release-influence-store.js";
@@ -23,6 +27,10 @@ import type {
 import type {
   IncidentCreator,
 } from "./routes/incidents.js";
+
+import type {
+  IncidentListReader,
+} from "../incidents/incident-list-store.js";
 
 import type {
   TyposquattingService,
@@ -67,6 +75,51 @@ const fakeIncidentCreator:
           status:
             "active" as const,
         }),
+  };
+
+const listedIncidentRequests: Array<{
+  readonly limit: number;
+  readonly cursor?: {
+    readonly observedAt: number;
+    readonly id: number;
+  };
+}> = [];
+
+const fakeIncidentListReader:
+  IncidentListReader = {
+    listIncidents: async (
+      options,
+    ) => {
+      listedIncidentRequests.push(
+        options,
+      );
+
+      return Object.freeze({
+        incidents: Object.freeze([
+          Object.freeze({
+            id: 123,
+            logicalId:
+              "incident:server-smoke",
+            title:
+              "Synthetic server smoke incident",
+            status: "active" as const,
+            intervalStart:
+              1_700_000_000_000,
+            intervalEnd: null,
+            affectedVersionCount: 2,
+            synthetic: true,
+            observedAt:
+              1_700_000_000_000,
+          }),
+        ]),
+        truncated: true,
+        nextCursor: Object.freeze({
+          observedAt:
+            1_700_000_000_000,
+          id: 123,
+        }),
+      });
+    },
   };
 const fakeFinding = Object.freeze({
   id: 321,
@@ -219,6 +272,9 @@ const unsafeEvidenceEntry = {
     "must-not-leak",
 };
 
+const analysisRequests:
+  LiveAnalysisOptions[] = [];
+
 const fakeAnalysisRunner:
   LiveBlastRadiusRunner =
     async (
@@ -226,6 +282,10 @@ const fakeAnalysisRunner:
       incidentId,
       options,
     ) => {
+      analysisRequests.push(
+        options ?? {},
+      );
+
       if (incidentId === 999) {
         throw new HydraGraphReaderError(
           "INCIDENT_NOT_FOUND",
@@ -390,6 +450,39 @@ const fakeAnalysisRunner:
           ],
         },
 
+        temporalWindow: {
+          asOf: 1_700_000_000_000,
+
+          incidentInterval: {
+            intervalStart:
+              1_700_000_000_000,
+            intervalEnd: null,
+          },
+
+          resolvedDuringWindow: [],
+          resolvedOutsideWindow: [],
+
+          unknownWindow: [
+            {
+              serviceId: 42,
+              serviceName:
+                "server-smoke-service",
+              overlap:
+                "unknown-window" as const,
+              reason:
+                "No lockfile snapshot validity was recorded for this resolution.",
+              evidenceIds: [],
+            },
+          ],
+
+          hasUnknown: true,
+          complete: false,
+
+          limitations: [
+            "1 services have no recorded lockfile history.",
+          ],
+        },
+
         hydraRead: {
           readEpoch:
             "2023-11-14T22:13:20.000Z",
@@ -530,6 +623,8 @@ async function main(): Promise<void> {
         fakePersistence,
       incidentCreator:
         fakeIncidentCreator,
+      incidentListReader:
+        fakeIncidentListReader,
       typosquattingService:
         fakeTyposquattingService,
       analysisRunner:
@@ -602,6 +697,131 @@ async function main(): Promise<void> {
   assert.equal(
     missingJob.statusCode,
     404,
+  );
+
+  const incidentList =
+    await runtime.app.inject({
+      method: "GET",
+      url: "/incidents?limit=10",
+    });
+
+  assert.equal(
+    incidentList.statusCode,
+    200,
+  );
+
+  const incidentListBody =
+    incidentList.json();
+
+  assert.equal(
+    incidentListBody.incidents[0]
+      .incidentId,
+    123,
+  );
+
+  /*
+   * Stored epochs must reach the wire as ISO date-times, and an open
+   * compromise interval must stay explicitly null rather than becoming a
+   * fabricated end time.
+   */
+  assert.equal(
+    incidentListBody.incidents[0]
+      .intervalStart,
+    "2023-11-14T22:13:20.000Z",
+  );
+
+  assert.equal(
+    incidentListBody.incidents[0]
+      .intervalEnd,
+    null,
+  );
+
+  assert.equal(
+    incidentListBody.incidents[0]
+      .affectedVersionCount,
+    2,
+  );
+
+  assert.equal(
+    incidentListBody.truncated,
+    true,
+  );
+
+  assert.deepEqual(
+    incidentListBody.nextCursor,
+    {
+      cursorObservedAt:
+        1_700_000_000_000,
+      cursorId: 123,
+    },
+  );
+
+  assert.deepEqual(
+    listedIncidentRequests.at(-1),
+    { limit: 10 },
+  );
+
+  const pagedIncidentList =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/incidents?limit=5" +
+        "&cursorObservedAt=1700000000000" +
+        "&cursorId=123",
+    });
+
+  assert.equal(
+    pagedIncidentList.statusCode,
+    200,
+  );
+
+  assert.deepEqual(
+    listedIncidentRequests.at(-1),
+    {
+      limit: 5,
+      cursor: {
+        observedAt:
+          1_700_000_000_000,
+        id: 123,
+      },
+    },
+  );
+
+  /*
+   * A half-supplied cursor must fail loudly. Silently returning page one
+   * would look like the incident index had lost rows.
+   */
+  const partialCursor =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/incidents?cursorObservedAt=1700000000000",
+    });
+
+  assert.equal(
+    partialCursor.statusCode,
+    400,
+  );
+
+  assert.equal(
+    partialCursor.json().code,
+    "INVALID_INCIDENT_CURSOR",
+  );
+
+  const invalidIncidentLimit =
+    await runtime.app.inject({
+      method: "GET",
+      url: "/incidents?limit=0",
+    });
+
+  assert.equal(
+    invalidIncidentLimit.statusCode,
+    400,
+  );
+
+  assert.equal(
+    invalidIncidentLimit.json().code,
+    "REQUEST_VALIDATION_FAILED",
   );
 
   const incident =
@@ -693,6 +913,72 @@ async function main(): Promise<void> {
   assert.deepEqual(
     analysisBody.serviceImpacts,
     [],
+  );
+
+  /*
+   * Q3 contract: a service with no recorded lockfile history must surface as
+   * unknown rather than being folded into "outside the window".
+   */
+  assert.equal(
+    analysisBody.temporalWindow
+      .hasUnknown,
+    true,
+  );
+
+  assert.equal(
+    analysisBody.temporalWindow
+      .complete,
+    false,
+  );
+
+  assert.equal(
+    analysisBody.temporalWindow
+      .unknownWindow[0].overlap,
+    "unknown-window",
+  );
+
+  assert.deepEqual(
+    analysisBody.temporalWindow
+      .resolvedOutsideWindow,
+    [],
+  );
+
+  const temporalAnalysis =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/incidents/123/blast-radius" +
+        "?asOf=2026-01-15T12:00:00.000Z",
+    });
+
+  assert.equal(
+    temporalAnalysis.statusCode,
+    200,
+  );
+
+  assert.equal(
+    analysisRequests.at(-1)?.blastRadius
+      ?.asOf,
+    Date.parse(
+      "2026-01-15T12:00:00.000Z",
+    ),
+  );
+
+  const malformedAsOf =
+    await runtime.app.inject({
+      method: "GET",
+      url:
+        "/incidents/123/blast-radius?asOf=yesterday",
+    });
+
+  assert.equal(
+    malformedAsOf.statusCode,
+    400,
+  );
+
+  assert.equal(
+    malformedAsOf.json().code,
+    "REQUEST_VALIDATION_FAILED",
   );
 
   assert.equal(

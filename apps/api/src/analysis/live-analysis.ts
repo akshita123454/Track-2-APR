@@ -8,6 +8,14 @@ import type {
   NodeId,
   PackageVersionNode,
 } from "../domain/schema.js";
+import {
+  buildTemporalWindow,
+} from "./core/temporal-projection.js";
+
+import type {
+  TemporalWindowResult,
+} from "./core/temporal-projection.js";
+
 import type {
   BlastRadiusOptions,
   BlastRadiusResult,
@@ -180,6 +188,13 @@ export interface LiveBlastRadiusResult
 
   readonly evidenceFunnel:
     EvidenceFunnelResult;
+
+  /**
+   * Whether each returned service resolved an affected version while the
+   * compromise interval was open.
+   */
+  readonly temporalWindow:
+    TemporalWindowResult;
 
   readonly hydraRead:
     HydraLiveReadTelemetry;
@@ -632,6 +647,25 @@ const evidenceFunnel:
             ]),
         });
 
+const temporalWindow =
+  buildTemporalWindow(
+    blastRadius,
+    {
+      intervalStart:
+        affectedVersionPage.incident
+          .intervalStart,
+      intervalEnd:
+        affectedVersionPage.incident
+          .intervalEnd,
+    },
+    options.blastRadius?.asOf === undefined
+      ? {}
+      : {
+          asOf:
+            options.blastRadius.asOf,
+        },
+  );
+
 const serviceImpacts =
   buildServiceImpactExplanations(
     blastRadius,
@@ -718,6 +752,7 @@ serviceImpacts,
       }),
 
     evidenceFunnel,
+    temporalWindow,
     hydraRead,
   });
 }

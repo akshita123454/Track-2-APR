@@ -10,6 +10,8 @@ import {
 import {
   CREATE_INCIDENT_ROUTE_SCHEMA,
   INCIDENT_LIMITS,
+  INCIDENT_LIST_LIMITS,
+  LIST_INCIDENTS_ROUTE_SCHEMA,
 } from "../schemas/incidents.js";
 
 import type {
@@ -17,7 +19,23 @@ import type {
   IncidentCreateRequestBody,
   IncidentCreatedResponse,
   IncidentIdempotencyHeaders,
+  IncidentListItemResponse,
+  IncidentListQuerystring,
+  IncidentListResponse,
 } from "../schemas/incidents.js";
+
+import {
+  IncidentListStoreError,
+} from "../../incidents/incident-list-store.js";
+
+import type {
+  IncidentListEntry,
+  IncidentListReader,
+} from "../../incidents/incident-list-store.js";
+
+import {
+  ApiError,
+} from "../errors.js";
 
 /**
  * Fully validated command passed to the incident persistence boundary.
@@ -64,6 +82,75 @@ export interface IncidentCreator {
 export interface IncidentRoutesOptions {
   readonly incidentCreator:
     IncidentCreator;
+
+  /**
+   * Bounded incident index used by GET /incidents.
+   */
+  readonly incidentListReader:
+    IncidentListReader;
+}
+
+/**
+ * Converts a stored epoch into the ISO date-time the wire contract declares.
+ *
+ * Persisted incidents are validated on write, so an unrepresentable epoch
+ * here means stored data is corrupt rather than that the request was bad.
+ */
+function toIsoTimestamp(
+  epochMs: number,
+  field: string,
+): string {
+  const date = new Date(epochMs);
+
+  if (Number.isNaN(date.getTime())) {
+    /*
+     * The offending field name stays out of the public payload; it is only
+     * useful to an operator reading private logs.
+     */
+    void field;
+
+    throw new ApiError(
+      "INCIDENT_LIST_UNAVAILABLE",
+      503,
+      "The incident index is temporarily unavailable.",
+    );
+  }
+
+  return date.toISOString();
+}
+
+function toIncidentListItem(
+  entry: IncidentListEntry,
+): IncidentListItemResponse {
+  return Object.freeze({
+    incidentId: entry.id,
+    logicalId: entry.logicalId,
+    title: entry.title,
+    status: entry.status,
+
+    intervalStart: toIsoTimestamp(
+      entry.intervalStart,
+      "incident.interval_start",
+    ),
+
+    intervalEnd:
+      entry.intervalEnd === null
+        ? null
+        : toIsoTimestamp(
+            entry.intervalEnd,
+            "incident.interval_end",
+          ),
+
+    affectedVersionCount:
+      entry.affectedVersionCount,
+
+    synthetic: entry.synthetic,
+
+    observedAt: toIsoTimestamp(
+      entry.observedAt,
+      "incident.observed_at",
+    ),
+  });
 }
 
 interface IncidentSemanticValidation {
@@ -311,6 +398,112 @@ export async function registerIncidentRoutes(
   app: FastifyInstance,
   options: IncidentRoutesOptions,
 ): Promise<void> {
+  app.get<{
+    Querystring:
+      IncidentListQuerystring;
+  }>(
+    "/incidents",
+    {
+      schema:
+        LIST_INCIDENTS_ROUTE_SCHEMA,
+    },
+    async (request, reply) => {
+      const {
+        limit,
+        cursorObservedAt,
+        cursorId,
+      } = request.query;
+
+      /*
+       * Both cursor halves define one position. Accepting a partial cursor
+       * would silently return the first page again and look like data loss.
+       */
+      if (
+        (cursorObservedAt ===
+          undefined) !==
+        (cursorId === undefined)
+      ) {
+        throw new ApiError(
+          "INVALID_INCIDENT_CURSOR",
+          400,
+          "cursorObservedAt and cursorId must be supplied together.",
+        );
+      }
+
+      let page;
+
+      try {
+        page =
+          await options
+            .incidentListReader
+            .listIncidents({
+              limit:
+                limit ??
+                INCIDENT_LIST_LIMITS
+                  .defaultLimit,
+
+              ...(cursorObservedAt ===
+                undefined ||
+              cursorId === undefined
+                ? {}
+                : {
+                    cursor: {
+                      observedAt:
+                        cursorObservedAt,
+                      id: cursorId,
+                    },
+                  }),
+            });
+      } catch (error: unknown) {
+        if (
+          error instanceof
+          IncidentListStoreError
+        ) {
+          request.log.error(
+            {
+              err: error,
+            },
+            "Incident index read failed",
+          );
+
+          throw new ApiError(
+            "INCIDENT_LIST_UNAVAILABLE",
+            503,
+            "The incident index is temporarily unavailable.",
+          );
+        }
+
+        throw error;
+      }
+
+      const body: IncidentListResponse =
+        Object.freeze({
+          incidents: Object.freeze(
+            page.incidents.map(
+              toIncidentListItem,
+            ),
+          ),
+
+          truncated: page.truncated,
+
+          nextCursor:
+            page.nextCursor === null
+              ? null
+              : Object.freeze({
+                  cursorObservedAt:
+                    page.nextCursor
+                      .observedAt,
+                  cursorId:
+                    page.nextCursor.id,
+                }),
+        });
+
+      return reply
+        .code(200)
+        .send(body);
+    },
+  );
+
   app.post<{
     Headers:
       IncidentIdempotencyHeaders;

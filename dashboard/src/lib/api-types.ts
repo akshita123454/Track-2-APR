@@ -427,3 +427,35 @@ export interface TyposquattingReviewResponse {
   readonly incidentId?: NodeId;
   readonly replayed: boolean;
 }
+
+/**
+ * GET /incidents
+ *
+ * Bounded, newest-first incident index. affectedVersionCount counts canonical
+ * AFFECTS targets only and does not assert that any service was exposed.
+ */
+export interface IncidentListItem {
+  readonly incidentId: number;
+  readonly logicalId: string;
+  readonly title: string;
+  readonly status: IncidentStatus;
+  readonly intervalStart: string;
+
+  /** Null means the compromise interval is still open. */
+  readonly intervalEnd: string | null;
+
+  readonly affectedVersionCount: number;
+  readonly synthetic: boolean;
+  readonly observedAt: string;
+}
+
+export interface IncidentListCursor {
+  readonly cursorObservedAt: number;
+  readonly cursorId: number;
+}
+
+export interface IncidentListResponse {
+  readonly incidents: readonly IncidentListItem[];
+  readonly truncated: boolean;
+  readonly nextCursor: IncidentListCursor | null;
+}

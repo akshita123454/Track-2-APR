@@ -19,7 +19,8 @@ export type NodeKind =
   | "Incident"
   | "Evidence"
   | "Control"
-  | "Finding";
+  | "Finding"
+  | "LockfileSnapshot";
 
 export type DependencyType =
   | "production"
@@ -247,8 +248,43 @@ export interface ControlNode extends BaseNode<"Control"> {
   readonly reversible: boolean;
 }
 
+export type LockfileVersion = 1 | 2 | 3;
+
+/**
+ * One observed state of a service's lockfile.
+ *
+ * This is the time axis of the graph. A DEPENDS_ON edge records that a
+ * resolution was observed; the snapshot records *when that resolution was
+ * true*, which is what makes "resolved while the compromise was live"
+ * answerable rather than guessed.
+ *
+ * validUntil is null while the snapshot is the service's current state. It is
+ * closed when a later ingestion observes different lockfile content.
+ */
+export interface LockfileSnapshotNode
+  extends BaseNode<"LockfileSnapshot"> {
+  readonly serviceId: NodeId;
+
+  /**
+   * Lowercase hex sha256 of the exact lockfile bytes that were parsed.
+   */
+  readonly contentSha256: string;
+
+  readonly lockfileVersion: LockfileVersion;
+  readonly validFrom: UnixEpochMilliseconds;
+
+  /**
+   * Null means this snapshot is still current.
+   */
+  readonly validUntil:
+    UnixEpochMilliseconds | null;
+
+  readonly commitSha?: string;
+}
+
 export type GraphNode =
   | PackageNode
+  | LockfileSnapshotNode
   | PackageVersionNode
   | RepositoryNode
   | ServiceNode
@@ -283,7 +319,8 @@ export type CanonicalRelKind =
   | "SUPPORTS"
   | "TARGETS"
   | "LOOKALIKE_OF"
-  | "IMITATES";
+  | "IMITATES"
+  | "RESOLVED_IN";
 
 export type GraphRelKind = CanonicalRelKind | "USED_BY";
 
@@ -334,6 +371,18 @@ export interface DependencyEdge
   readonly declaredRange?: string;
   readonly lockfilePath?: string;
   readonly integrity?: string;
+
+  /**
+   * Temporal validity of this exact resolution.
+   *
+   * Every field is optional so previously persisted edges stay valid and
+   * HYDRA_SCHEMA_VERSION does not have to change. Absent validFrom means the
+   * resolution window is unknown, and unknown must never be treated as safe.
+   * Absent validUntil means the resolution is still current.
+   */
+  readonly snapshotId?: NodeId;
+  readonly validFrom?: UnixEpochMilliseconds;
+  readonly validUntil?: UnixEpochMilliseconds;
 }
 
 export interface LookalikeEdge

@@ -74,6 +74,7 @@ export const NODE_LABEL_BY_KIND = {
   Evidence: "Evidence",
   Control: "Control",
   Finding: "Finding",
+  LockfileSnapshot: "LockfileSnapshot",
 } as const satisfies Record<NodeKind, NodeKind>;
 
 export const EDGE_TYPE_BY_KIND = {
@@ -96,6 +97,7 @@ export const EDGE_TYPE_BY_KIND = {
   TARGETS: "TARGETS",
   LOOKALIKE_OF: "LOOKALIKE_OF",
   IMITATES: "IMITATES",
+  RESOLVED_IN: "RESOLVED_IN",
   USED_BY: "USED_BY",
 } as const satisfies Record<GraphRelKind, GraphRelKind>;
 
@@ -234,6 +236,17 @@ export const NODE_PROPERTY_KEYS = {
     "decision_reason",
     "has_decision_reason",
   ],
+  LockfileSnapshot: [
+    ...BASE_NODE_PROPERTIES,
+    "service_id",
+    "content_sha256",
+    "lockfile_version",
+    "valid_from",
+    "valid_until",
+    "has_valid_until",
+    "commit_sha",
+    "has_commit_sha",
+  ],
 } as const satisfies Record<NodeKind, readonly string[]>;
 
 const CANONICAL_EDGE_PROPERTIES = [
@@ -266,6 +279,12 @@ const DEPENDENCY_EDGE_PROPERTIES = [
   "has_lockfile_path",
   "integrity",
   "has_integrity",
+  "snapshot_id",
+  "has_snapshot_id",
+  "valid_from",
+  "has_valid_from",
+  "valid_until",
+  "has_valid_until",
 ] as const;
 
 const LOOKALIKE_EDGE_PROPERTIES = [
@@ -311,6 +330,7 @@ export const EDGE_PROPERTY_KEYS = {
   TARGETS: CANONICAL_EDGE_PROPERTIES,
   LOOKALIKE_OF: LOOKALIKE_EDGE_PROPERTIES,
   IMITATES: CANONICAL_EDGE_PROPERTIES,
+  RESOLVED_IN: CANONICAL_EDGE_PROPERTIES,
   USED_BY: DERIVED_EDGE_PROPERTIES,
 } as const satisfies Record<GraphRelKind, readonly string[]>;
 
@@ -759,6 +779,70 @@ function serializeNodeProperties(node: GraphNode): HydraRow {
       };
       break;
 
+    case "LockfileSnapshot":
+      assertSafeId(
+        node.serviceId,
+        "LockfileSnapshot.serviceId",
+      );
+
+      if (!/^[0-9a-f]{64}$/.test(node.contentSha256)) {
+        fail(
+          "LockfileSnapshot.contentSha256 must be lowercase hex sha256",
+        );
+      }
+
+      /*
+       * assertEnum is string-only, so the numeric lockfile version is
+       * range-checked directly.
+       */
+      if (
+        node.lockfileVersion !== 1 &&
+        node.lockfileVersion !== 2 &&
+        node.lockfileVersion !== 3
+      ) {
+        fail(
+          "LockfileSnapshot.lockfileVersion must be 1, 2, or 3",
+        );
+      }
+
+      assertTimestamp(
+        node.validFrom,
+        "LockfileSnapshot.validFrom",
+      );
+
+      if (node.validUntil !== null) {
+        assertTimestamp(
+          node.validUntil,
+          "LockfileSnapshot.validUntil",
+        );
+
+        if (node.validUntil < node.validFrom) {
+          fail(
+            "LockfileSnapshot.validUntil precedes validFrom",
+          );
+        }
+      }
+
+      if (node.commitSha !== undefined) {
+        assertText(
+          node.commitSha,
+          "LockfileSnapshot.commitSha",
+        );
+      }
+
+      specific = {
+        service_id: node.serviceId,
+        content_sha256: node.contentSha256,
+        lockfile_version: node.lockfileVersion,
+        valid_from: node.validFrom,
+        valid_until: node.validUntil ?? 0,
+        has_valid_until: node.validUntil !== null,
+        commit_sha: node.commitSha ?? "",
+        has_commit_sha:
+          node.commitSha !== undefined,
+      };
+      break;
+
     case "Incident":
       assertText(node.title, "Incident.title");
       assertEnum(node.status, INCIDENT_STATUSES, "Incident.status");
@@ -975,6 +1059,39 @@ function serializeCanonicalEdgeProperties(
         "DEPENDS_ON.dependencyType",
       );
 
+      if (edge.snapshotId !== undefined) {
+        assertSafeId(
+          edge.snapshotId,
+          "DEPENDS_ON.snapshotId",
+        );
+      }
+
+      if (edge.validFrom !== undefined) {
+        assertTimestamp(
+          edge.validFrom,
+          "DEPENDS_ON.validFrom",
+        );
+      }
+
+      if (edge.validUntil !== undefined) {
+        assertTimestamp(
+          edge.validUntil,
+          "DEPENDS_ON.validUntil",
+        );
+
+        if (edge.validFrom === undefined) {
+          fail(
+            "DEPENDS_ON.validUntil requires validFrom",
+          );
+        }
+
+        if (edge.validUntil < edge.validFrom) {
+          fail(
+            "DEPENDS_ON.validUntil precedes validFrom",
+          );
+        }
+      }
+
       return finalizeProperties(
         EDGE_PROPERTY_KEYS.DEPENDS_ON,
         {
@@ -988,6 +1105,15 @@ function serializeCanonicalEdgeProperties(
             edge.lockfilePath !== undefined,
           integrity: edge.integrity ?? "",
           has_integrity: edge.integrity !== undefined,
+          snapshot_id: edge.snapshotId ?? 0,
+          has_snapshot_id:
+            edge.snapshotId !== undefined,
+          valid_from: edge.validFrom ?? 0,
+          has_valid_from:
+            edge.validFrom !== undefined,
+          valid_until: edge.validUntil ?? 0,
+          has_valid_until:
+            edge.validUntil !== undefined,
         },
       );
 

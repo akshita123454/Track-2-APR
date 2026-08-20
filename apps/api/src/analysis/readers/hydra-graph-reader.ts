@@ -255,6 +255,14 @@ const FIND_AFFECTED_VERSION_PROJECTIONS = [
 ] as const;
 
 
+/*
+ * The temporal predicate is a static, parameterized clause. $has_as_of gates
+ * it so the untimed query shape stays byte-identical to before.
+ *
+ * A resolution with no recorded validity (has_valid_from = false) is retained
+ * on purpose: it cannot be shown to be outside the window, so dropping it
+ * here would silently convert "unknown" into "safe".
+ */
 function buildFindDependentsQuery(
   fetchLimit: number,
 ): string {
@@ -267,6 +275,12 @@ function buildFindDependentsQuery(
 
     "WHERE canonical.id = reverse.derived_from",
 
+    "  AND ($has_as_of = false",
+    "       OR canonical.has_valid_from = false",
+    "       OR (canonical.valid_from <= $as_of",
+    "           AND (canonical.has_valid_until = false",
+    "                OR canonical.valid_until >= $as_of)))",
+
     projectionClause(
       FIND_DEPENDENTS_PROJECTIONS,
     ),
@@ -278,19 +292,14 @@ function buildFindDependentsQuery(
   ].join("\n");
 }
 
-function buildGetEvidenceQuery(
-  fetchLimit: number,
-): string {
-  return [
-    "UNWIND $rows AS row",
-    "MATCH (n:Evidence {id: row.vertex})",
-    projectionClause(
-      GET_EVIDENCE_PROJECTIONS,
-    ),
-    "ORDER BY evidence_vertex",
-    `LIMIT ${fetchLimit}`,
-  ].join("\n");
-}
+const GET_EVIDENCE_BY_ID_QUERY = [
+  "MATCH (n:Evidence {id: $node_id})",
+  projectionClause(
+    GET_EVIDENCE_PROJECTIONS,
+  ),
+  "ORDER BY evidence_vertex",
+  "LIMIT 2",
+].join("\n");
 
 function buildFindAffectedVersionsQuery(
   fetchLimit: number,
@@ -337,6 +346,21 @@ function assertNodeId(
   ) {
     throw new RangeError(
       `${field} must be a nonnegative safe integer`,
+    );
+  }
+}
+
+function assertEpoch(
+  value: number,
+  field: string,
+): void {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_DATE_EPOCH_MS
+  ) {
+    throw new RangeError(
+      `${field} must be a nonnegative safe Unix epoch in milliseconds`,
     );
   }
 }
@@ -687,11 +711,21 @@ export class HydraGraphReader
       "get-node",
     );
 
-    if (records.length === 0) {
+    /*
+     * HydraDB answers a non-matching MATCH with one all-null row, so a null
+     * kind means the node is absent rather than corrupt.
+     */
+    const presentRecords = records.filter(
+      (record) =>
+        record.get("node_kind") !== null &&
+        record.get("node_kind") !== undefined,
+    );
+
+    if (presentRecords.length === 0) {
       return null;
     }
 
-    if (records.length !== 1) {
+    if (presentRecords.length !== 1) {
       throw new HydraGraphReaderError(
         "GRAPH_CORRUPTION",
         `HydraDB returned multiple nodes for ID ${nodeId}`,
@@ -725,12 +759,21 @@ export class HydraGraphReader
       this.maxPageSize,
     );
 
+    if (options.asOf !== undefined) {
+      assertEpoch(
+        options.asOf,
+        "findDependents asOf",
+      );
+    }
+
     const fetchLimit = options.limit + 1;
 
     const records = await this.runQuery(
       buildFindDependentsQuery(fetchLimit),
       {
         node_id: nodeId,
+        has_as_of: options.asOf !== undefined,
+        as_of: options.asOf ?? 0,
       },
       "find-dependents",
     );
@@ -900,19 +943,37 @@ export class HydraGraphReader
     const requestedIdSet =
       new Set(requestedIds);
 
-    const rows = requestedIds.map(
-      (vertex) => ({ vertex }),
-    );
+    /*
+     * Read one Evidence node per statement. HydraDB restricts UNWIND batches
+     * to one-hop relationship patterns and accepts a composite parameter only
+     * as an UNWIND input, so neither a batched UNWIND read nor an
+     * `id IN $ids` predicate is executable. The caller-side
+     * maxEvidenceIdsPerRead bound keeps the statement count bounded.
+     */
+    const records: RecordLike[] = [];
 
-    const records = await this.runQuery(
-      buildGetEvidenceQuery(
-        requestedIds.length + 1,
-      ),
-      {
-        rows,
-      },
-      "get-evidence",
-    );
+    for (const vertex of requestedIds) {
+      const single = await this.runQuery(
+        GET_EVIDENCE_BY_ID_QUERY,
+        { node_id: vertex },
+        "get-evidence",
+      );
+
+      /*
+       * A MATCH that binds nothing yields one all-null row, which means the
+       * Evidence node is absent rather than malformed.
+       */
+      for (const record of single) {
+        if (
+          record.get("evidence_kind") !==
+            null &&
+          record.get("evidence_kind") !==
+            undefined
+        ) {
+          records.push(record);
+        }
+      }
+    }
 
     if (records.length > requestedIds.length) {
       throw new HydraGraphReaderError(

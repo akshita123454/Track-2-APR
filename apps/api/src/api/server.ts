@@ -39,6 +39,22 @@ import {
 } from "../incidents/incident-service.js";
 
 import {
+  HydraIncidentListStore,
+} from "../incidents/incident-list-store.js";
+
+import type {
+  IncidentListReader,
+} from "../incidents/incident-list-store.js";
+
+import {
+  HydraLockfileSnapshotStore,
+} from "../ingest/lockfile/snapshot-store.js";
+
+import type {
+  LockfileSnapshotCloser,
+} from "../ingest/lockfile/snapshot-store.js";
+
+import {
   TyposquattingService,
 } from "../typosquatting/service.js";
 
@@ -100,6 +116,10 @@ export interface BuildServerOptions {
 
   readonly incidentCreator?:
     IncidentCreator;
+  readonly incidentListReader?:
+    IncidentListReader;
+  readonly lockfileSnapshots?:
+    LockfileSnapshotCloser;
   readonly typosquattingService?:
     TyposquattingService;
   readonly analystAuthorizer?:
@@ -309,6 +329,11 @@ export async function buildServer(
         persistence,
         typosquatting:
           typosquattingService,
+        lockfileSnapshots:
+          options.lockfileSnapshots ??
+          new HydraLockfileSnapshotStore(
+            driver,
+          ),
 
         npmRegistry: {
           registryUrl:
@@ -342,6 +367,12 @@ export async function buildServer(
     registerIncidentRoutes,
     {
       incidentCreator,
+
+      incidentListReader:
+        options.incidentListReader ??
+        new HydraIncidentListStore(
+          driver,
+        ),
     },
   );
   await app.register(

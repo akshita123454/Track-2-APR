@@ -34,6 +34,16 @@ export interface CreateDependencyPairInput {
   readonly declaredRange?: string;
   readonly lockfilePath?: string;
   readonly integrity?: string;
+
+  /**
+   * Temporal validity of this resolution.
+   *
+   * Supplying validUntil without validFrom is rejected because a closing
+   * timestamp alone cannot be placed on the time axis.
+   */
+  readonly snapshotId?: number;
+  readonly validFrom?: UnixEpochMilliseconds;
+  readonly validUntil?: UnixEpochMilliseconds;
 }
 
 export interface DependencyPair {
@@ -53,6 +63,25 @@ export function createDependencyPair(
   if (input.discriminator.trim().length === 0) {
     throw new Error(
       "A dependency edge requires a stable identity discriminator",
+    );
+  }
+
+  if (
+    input.validUntil !== undefined &&
+    input.validFrom === undefined
+  ) {
+    throw new Error(
+      "A dependency edge validUntil requires validFrom",
+    );
+  }
+
+  if (
+    input.validFrom !== undefined &&
+    input.validUntil !== undefined &&
+    input.validUntil < input.validFrom
+  ) {
+    throw new Error(
+      "A dependency edge validUntil cannot precede validFrom",
     );
   }
 
@@ -85,6 +114,18 @@ export function createDependencyPair(
     ...(input.integrity === undefined
       ? {}
       : { integrity: input.integrity }),
+
+    ...(input.snapshotId === undefined
+      ? {}
+      : { snapshotId: input.snapshotId }),
+
+    ...(input.validFrom === undefined
+      ? {}
+      : { validFrom: input.validFrom }),
+
+    ...(input.validUntil === undefined
+      ? {}
+      : { validUntil: input.validUntil }),
   };
 
   const reverseIdentity = createDerivedEdgeIdentity(

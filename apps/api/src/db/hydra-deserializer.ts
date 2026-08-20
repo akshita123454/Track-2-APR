@@ -9,6 +9,7 @@ import type {
   GraphEdge,
   GraphNode,
   GraphRelKind,
+  LockfileVersion,
   NodeKind,
 } from "../domain/schema.js";
 
@@ -107,6 +108,7 @@ const NODE_KINDS = [
   "Evidence",
   "Control",
   "Finding",
+  "LockfileSnapshot",
 ] as const satisfies readonly NodeKind[];
 
 const EDGE_KINDS = [
@@ -129,6 +131,7 @@ const EDGE_KINDS = [
   "TARGETS",
   "LOOKALIKE_OF",
   "IMITATES",
+  "RESOLVED_IN",
   "USED_BY",
 ] as const satisfies readonly GraphRelKind[];
 
@@ -1026,6 +1029,45 @@ function readOptionalTimestamp(
   return value;
 }
 
+/**
+ * Optional nonnegative node reference using the same zero-sentinel contract
+ * as readOptionalTimestamp. Kept separate so failures name an identity
+ * problem rather than a timestamp problem.
+ */
+function readOptionalSafeId(
+  row: Readonly<Record<string, HydraScalar>>,
+  valueKey: string,
+  presenceKey: string,
+  entityType: HydraEntityType,
+): number | undefined {
+  const present = readBoolean(
+    row,
+    presenceKey,
+    entityType,
+  );
+
+  const value = readSafeInteger(
+    row,
+    valueKey,
+    entityType,
+  );
+
+  if (!present) {
+    if (value !== 0) {
+      return fail(
+        "PROPERTY_VALUE_INVALID",
+        entityType,
+        valueKey,
+        `must use the zero sentinel when ${presenceKey} is false`,
+      );
+    }
+
+    return undefined;
+  }
+
+  return value;
+}
+
 function readOptionalBoolean(
   row: Readonly<Record<string, HydraScalar>>,
   valueKey: string,
@@ -1484,6 +1526,95 @@ export function deserializeHydraNode(
           true,
         ),
       };
+
+    case "LockfileSnapshot": {
+      const validFrom = readSafeInteger(
+        row,
+        "valid_from",
+        entityType,
+      );
+
+      const optionalValidUntil = readOptionalTimestamp(
+        row,
+        "valid_until",
+        "has_valid_until",
+        entityType,
+      );
+
+      if (
+        optionalValidUntil !== undefined &&
+        optionalValidUntil < validFrom
+      ) {
+        return fail(
+          "PROPERTY_VALUE_INVALID",
+          entityType,
+          "valid_until",
+          "must not precede valid_from",
+        );
+      }
+
+      const contentSha256 = readNonemptyText(
+        row,
+        "content_sha256",
+        entityType,
+      );
+
+      if (!/^[0-9a-f]{64}$/.test(contentSha256)) {
+        return fail(
+          "PROPERTY_VALUE_INVALID",
+          entityType,
+          "content_sha256",
+          "must be lowercase hex sha256",
+        );
+      }
+
+      /*
+       * readRowEnum only supports string enums, so the numeric lockfile
+       * version is range-checked explicitly.
+       */
+      const rawLockfileVersion = readSafeInteger(
+        row,
+        "lockfile_version",
+        entityType,
+      );
+
+      if (
+        rawLockfileVersion !== 1 &&
+        rawLockfileVersion !== 2 &&
+        rawLockfileVersion !== 3
+      ) {
+        return fail(
+          "PROPERTY_VALUE_INVALID",
+          entityType,
+          "lockfile_version",
+          "must be 1, 2, or 3",
+        );
+      }
+
+      const lockfileVersion:
+        LockfileVersion = rawLockfileVersion;
+
+      return {
+        ...base,
+        kind,
+        serviceId: readSafeInteger(
+          row,
+          "service_id",
+          entityType,
+        ),
+        contentSha256,
+        lockfileVersion,
+        validFrom,
+        validUntil: optionalValidUntil ?? null,
+        commitSha: readOptionalText(
+          row,
+          "commit_sha",
+          "has_commit_sha",
+          entityType,
+          false,
+        ),
+      };
+    }
 
     case "Incident": {
       const intervalStart = readSafeInteger(
@@ -2010,6 +2141,24 @@ export function deserializeHydraEdge(
           "has_integrity",
           entityType,
           false,
+        ),
+        snapshotId: readOptionalSafeId(
+          row,
+          "snapshot_id",
+          "has_snapshot_id",
+          entityType,
+        ),
+        validFrom: readOptionalTimestamp(
+          row,
+          "valid_from",
+          "has_valid_from",
+          entityType,
+        ),
+        validUntil: readOptionalTimestamp(
+          row,
+          "valid_until",
+          "has_valid_until",
+          entityType,
         ),
       };
 

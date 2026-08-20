@@ -315,6 +315,10 @@ export async function analyzeBlastRadius(
       nodeId,
       {
         limit: limits.maxDependentsPerNode,
+
+        ...(options.asOf === undefined
+          ? {}
+          : { asOf: options.asOf }),
       },
     );
 

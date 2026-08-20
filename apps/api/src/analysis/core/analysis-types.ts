@@ -5,6 +5,7 @@ import type {
   GraphNode,
   NodeId,
   ServiceNode,
+  UnixEpochMilliseconds,
 } from "../../domain/schema.js";
 
 /**
@@ -67,6 +68,16 @@ export interface DependencyHop {
  */
 export interface FindDependentsOptions {
   readonly limit: number;
+
+  /**
+   * Optional point in time the traversal should reflect.
+   *
+   * When supplied, only resolutions whose recorded validity contains this
+   * instant are returned. Resolutions with no recorded validity are retained
+   * because an unknown window must not be silently treated as "not resolved";
+   * callers classify them explicitly as unknown.
+   */
+  readonly asOf?: UnixEpochMilliseconds;
 }
 
 /**
@@ -148,6 +159,15 @@ export interface BlastRadiusOptions {
    * One warning slot is reserved for the warning-limit notification.
    */
   readonly maxWarnings?: number;
+
+  /**
+   * Point in time the traversal should reflect.
+   *
+   * This is not a safety limit. It restricts traversal to resolutions whose
+   * recorded validity contains this instant, while retaining resolutions with
+   * no recorded validity so unknown windows stay visible.
+   */
+  readonly asOf?: UnixEpochMilliseconds;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 import type {
   GraphEdge,
   GraphNode,
+  LockfileSnapshotNode,
   PackageNode,
   PackageVersionNode,
   ServiceCriticality,
@@ -44,15 +45,41 @@ export interface LockfileCollectorOptions {
   readonly confidence?: number;
   readonly synthetic?: boolean;
   readonly maxPackages?: number;
+
+  /**
+   * When this lockfile state became true, which is not necessarily when it
+   * was observed. Supply the commit or deploy timestamp when it is known so
+   * temporal questions are answered against reality rather than scan time.
+   *
+   * Defaults to observedAt.
+   */
+  readonly validFrom?: number;
+
+  /**
+   * Commit that produced this lockfile state, when known.
+   */
+  readonly commitSha?: string;
 }
 
 export interface LockfileCollectorResult {
   readonly nodes: readonly GraphNode[];
   readonly edges: readonly GraphEdge[];
   readonly evidenceId: number;
+  readonly serviceId: number;
   readonly serviceLogicalId: string;
   readonly contentSha256: string;
   readonly issues: readonly LockfileIssue[];
+
+  /**
+   * Identity of the LockfileSnapshot describing this exact lockfile state.
+   *
+   * Callers persist the graph and then close any earlier open snapshot for
+   * the same service, which is what turns a sequence of ingestions into
+   * queryable history.
+   */
+  readonly snapshotId: number;
+  readonly snapshotLogicalId: string;
+  readonly validFrom: number;
 }
 
 function stableSerialize(value: unknown): string {
@@ -211,6 +238,54 @@ export function collectPackageLock(
     criticality: options.serviceCriticality,
   };
 
+  const validFrom =
+    options.validFrom ?? observedAt;
+
+  if (
+    !Number.isSafeInteger(validFrom) ||
+    validFrom < 0
+  ) {
+    throw new Error(
+      "validFrom must be a nonnegative safe integer epoch",
+    );
+  }
+
+  if (
+    options.commitSha !== undefined &&
+    options.commitSha.trim().length === 0
+  ) {
+    throw new Error(
+      "commitSha must not be empty when supplied",
+    );
+  }
+
+  /*
+   * Snapshot identity is content-addressed per service, so re-ingesting the
+   * same bytes is idempotent while different bytes always produce a new
+   * snapshot that can supersede the previous one.
+   */
+  const snapshotIdentity = createEntityIdentity(
+    `lockfile-snapshot:${options.serviceLogicalId}:` +
+      contentSha256,
+  );
+
+  const snapshotNode: LockfileSnapshotNode = {
+    ...snapshotIdentity,
+    kind: "LockfileSnapshot",
+    evidenceIds: [evidenceNode.id],
+    synthetic,
+    observedAt,
+    serviceId: serviceNode.id,
+    contentSha256,
+    lockfileVersion: parsed.lockfileVersion,
+    validFrom,
+    validUntil: null,
+
+    ...(options.commitSha === undefined
+      ? {}
+      : { commitSha: options.commitSha }),
+  };
+
   const nodesByLogicalId = new Map<string, GraphNode>();
   const edgesById = new Map<number, GraphEdge>();
   const versionNodeByPath = new Map<
@@ -220,6 +295,10 @@ export function collectPackageLock(
 
   nodesByLogicalId.set(evidenceNode.logicalId, evidenceNode);
   nodesByLogicalId.set(serviceNode.logicalId, serviceNode);
+  nodesByLogicalId.set(
+    snapshotNode.logicalId,
+    snapshotNode,
+  );
 
   const addNode = (node: GraphNode): void => {
     const existing = nodesByLogicalId.get(node.logicalId);
@@ -310,6 +389,33 @@ export function collectPackageLock(
       lockPackage.installPath,
       versionNode,
     );
+
+    /*
+     * RESOLVED_IN records that this snapshot resolved this exact version.
+     * The install path is the discriminator because one version can legally
+     * appear at several locations in a single lockfile.
+     */
+    const resolvedDiscriminator =
+      `package-lock:${lockPackage.installPath}`;
+
+    addEdge({
+      ...createEdgeIdentity({
+        kind: "RESOLVED_IN",
+        sourceLogicalId:
+          snapshotNode.logicalId,
+        targetLogicalId:
+          versionNode.logicalId,
+        discriminator: resolvedDiscriminator,
+      }),
+      kind: "RESOLVED_IN",
+      sourceId: snapshotNode.id,
+      targetId: versionNode.id,
+      observedAt,
+      derived: false,
+      identityDiscriminator:
+        resolvedDiscriminator,
+      evidenceIds: [evidenceNode.id],
+    });
   }
 
   const packageByPath = new Map(
@@ -364,6 +470,16 @@ export function collectPackageLock(
       generatorVersion: LOCKFILE_COLLECTOR_VERSION,
       declaredRange: resolution.declaredRange,
       lockfilePath: resolution.targetPath,
+
+      /*
+       * The resolution inherits the snapshot's validity so temporal queries
+       * can filter dependency edges directly instead of joining through the
+       * snapshot on every traversal hop. validUntil stays absent because this
+       * snapshot is current until a later ingestion supersedes it.
+       */
+      snapshotId: snapshotNode.id,
+      validFrom,
+
       ...(targetPackage.integrity === undefined
         ? {}
         : { integrity: targetPackage.integrity }),
@@ -391,8 +507,12 @@ export function collectPackageLock(
     nodes,
     edges,
     evidenceId: evidenceNode.id,
+    serviceId: serviceNode.id,
     serviceLogicalId: serviceNode.logicalId,
     contentSha256,
     issues: parsed.issues,
+    snapshotId: snapshotNode.id,
+    snapshotLogicalId: snapshotNode.logicalId,
+    validFrom,
   };
 }

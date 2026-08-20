@@ -52,6 +52,7 @@ export type JobFailureCode =
   | "JOB_TIMED_OUT"
   | "PARTIAL_COLLECTION"
   | "TYPOSQUATTING_SCAN_FAILED"
+  | "SNAPSHOT_HISTORY_NOT_CLOSED"
   | "INTERNAL_JOB_ERROR";
 
 const SAFE_FAILURE_MESSAGES: Readonly<
@@ -73,6 +74,8 @@ const SAFE_FAILURE_MESSAGES: Readonly<
     "The ingestion exceeded its permitted execution time.",
   PARTIAL_COLLECTION:
     "The ingestion completed with one or more unavailable inputs.",
+  SNAPSHOT_HISTORY_NOT_CLOSED:
+    "The dependency graph was stored, but earlier lockfile history could not be closed.",
   TYPOSQUATTING_SCAN_FAILED:
     "The dependency graph was persisted, but typosquatting analysis could not be completed.",
   INTERNAL_JOB_ERROR:

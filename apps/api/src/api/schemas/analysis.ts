@@ -55,6 +55,12 @@ export interface IncidentAnalysisQuerystring {
   readonly highConfidenceThreshold?: number;
   readonly maxEvidenceIds?: number;
   readonly evidenceReadChunkSize?: number;
+
+  /**
+   * ISO date-time restricting traversal to resolutions that were in force at
+   * that instant. Omitting it analyzes current state.
+   */
+  readonly asOf?: string;
 }
 
 export type LiveBlastRadiusResponse =
@@ -1258,6 +1264,146 @@ const SERVICE_IMPACT_SCHEMA = {
   },
 } as const;
 
+const WINDOW_OVERLAP_VALUES = [
+  "resolved-during-window",
+  "resolved-outside-window",
+  "unknown-window",
+] as const;
+
+const SERVICE_WINDOW_ASSESSMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+
+  required: [
+    "serviceId",
+    "serviceName",
+    "overlap",
+    "reason",
+    "evidenceIds",
+  ],
+
+  properties: {
+    serviceId: NODE_ID_SCHEMA,
+
+    serviceName: {
+      type: "string",
+      minLength: 1,
+      maxLength: 512,
+    },
+
+    overlap: {
+      type: "string",
+      enum: WINDOW_OVERLAP_VALUES,
+    },
+
+    reason: {
+      type: "string",
+      minLength: 1,
+      maxLength: 4_096,
+    },
+
+    evidenceIds: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxEvidenceIds,
+      items: NODE_ID_SCHEMA,
+    },
+
+    earliestValidFrom: TIMESTAMP_SCHEMA,
+    latestValidUntil: TIMESTAMP_SCHEMA,
+  },
+} as const;
+
+/**
+ * Q3 contract: which services resolved an affected version while the
+ * compromise interval was open.
+ *
+ * unknownWindow is a first-class bucket. A service with no recorded lockfile
+ * history must never appear in resolvedOutsideWindow.
+ */
+const TEMPORAL_WINDOW_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+
+  required: [
+    "asOf",
+    "incidentInterval",
+    "resolvedDuringWindow",
+    "resolvedOutsideWindow",
+    "unknownWindow",
+    "hasUnknown",
+    "complete",
+    "limitations",
+  ],
+
+  properties: {
+    asOf: {
+      anyOf: [
+        TIMESTAMP_SCHEMA,
+        { type: "null" },
+      ],
+    },
+
+    incidentInterval: {
+      type: "object",
+      additionalProperties: false,
+
+      required: [
+        "intervalStart",
+        "intervalEnd",
+      ],
+
+      properties: {
+        intervalStart: TIMESTAMP_SCHEMA,
+
+        intervalEnd: {
+          anyOf: [
+            TIMESTAMP_SCHEMA,
+            { type: "null" },
+          ],
+        },
+      },
+    },
+
+    resolvedDuringWindow: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxServices,
+      items:
+        SERVICE_WINDOW_ASSESSMENT_SCHEMA,
+    },
+
+    resolvedOutsideWindow: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxServices,
+      items:
+        SERVICE_WINDOW_ASSESSMENT_SCHEMA,
+    },
+
+    unknownWindow: {
+      type: "array",
+      maxItems:
+        ANALYSIS_ROUTE_LIMITS.maxServices,
+      items:
+        SERVICE_WINDOW_ASSESSMENT_SCHEMA,
+    },
+
+    hasUnknown: { type: "boolean" },
+    complete: { type: "boolean" },
+
+    limitations: {
+      type: "array",
+      maxItems: 50,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 4_096,
+      },
+    },
+  },
+} as const;
+
 export const LIVE_BLAST_RADIUS_RESPONSE_SCHEMA = {
   $id:
     ANALYSIS_SCHEMA_IDS
@@ -1281,11 +1427,15 @@ export const LIVE_BLAST_RADIUS_RESPONSE_SCHEMA = {
     "affectedVersions",
     "evidenceCatalog",
     "serviceImpacts",
+    "temporalWindow",
   ],
 
   properties: {
     incidentId:
       NODE_ID_SCHEMA,
+
+    temporalWindow:
+      TEMPORAL_WINDOW_SCHEMA,
     incident:
         LIVE_INCIDENT_SUMMARY_SCHEMA,
 
@@ -1411,6 +1561,13 @@ export const INCIDENT_ANALYSIS_QUERY_SCHEMA = {
   additionalProperties: false,
 
   properties: {
+    asOf: {
+      type: "string",
+      minLength: 20,
+      maxLength: 64,
+      format: "date-time",
+    },
+
     maxAffectedVersions: {
       type: "integer",
       minimum: 1,

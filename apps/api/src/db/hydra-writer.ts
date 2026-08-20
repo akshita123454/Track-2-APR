@@ -431,10 +431,10 @@ function buildEdgeUpsertQuery(
 
   return [
     "UNWIND $rows AS row",
-    `MATCH (s:${group.sourceLabel} {id: row.source_vertex}), ` +
-      `(d:${group.destinationLabel} {id: row.destination_vertex})`,
-    `MERGE (s)-[r:${group.relationshipType} ` +
-      `{id: row.relationship_vertex}]->(d)`,
+    `MERGE (s:${group.sourceLabel} {id: row.source_vertex})` +
+  `-[r:${group.relationshipType} {id: row.relationship_vertex}]->` +
+  `(d:${group.destinationLabel} {id: row.destination_vertex})`,
+
     `SET ${assignments.join(", ")}`,
   ].join("\n");
 }
@@ -952,15 +952,27 @@ export async function persistGraphBatch(
           },
         );
 
-        if (byId.records.length > 1) {
+        /*
+         * HydraDB answers a MATCH that binds nothing with one all-null row
+         * rather than zero rows. A null projected identity therefore means
+         * "no such node"; treating that row as a hit would raise a false
+         * identity collision and block every first write.
+         */
+        const byIdRecords = byId.records.filter(
+          (record) =>
+            record.get("logical_id") !== null &&
+            record.get("logical_id") !== undefined,
+        );
+
+        if (byIdRecords.length > 1) {
           throw new WriterBoundaryError(
             "DATABASE_ID_COLLISION",
             "Multiple HydraDB nodes use the same deterministic ID",
           );
         }
 
-        if (byId.records.length === 1) {
-          const record = byId.records[0];
+        if (byIdRecords.length === 1) {
+          const record = byIdRecords[0];
 
           if (
             asString(
@@ -996,15 +1008,22 @@ export async function persistGraphBatch(
           },
         );
 
-        if (byLogicalId.records.length > 1) {
+        const byLogicalIdRecords =
+          byLogicalId.records.filter(
+            (record) =>
+              record.get("id") !== null &&
+              record.get("id") !== undefined,
+          );
+
+        if (byLogicalIdRecords.length > 1) {
           throw new WriterBoundaryError(
             "DATABASE_LOGICAL_ID_COLLISION",
             "Multiple HydraDB nodes use the same logical identity",
           );
         }
 
-        if (byLogicalId.records.length === 1) {
-          const record = byLogicalId.records[0];
+        if (byLogicalIdRecords.length === 1) {
+          const record = byLogicalIdRecords[0];
 
           if (
             asSafeInteger(

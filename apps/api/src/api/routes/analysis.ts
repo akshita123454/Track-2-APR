@@ -151,7 +151,37 @@ function blastRadiusOptions(
           maxWarnings:
             query.maxWarnings,
         }),
+
+    ...(query.asOf === undefined
+      ? {}
+      : {
+          asOf: parseAsOf(query.asOf),
+        }),
   };
+}
+
+/**
+ * Converts the ISO asOf parameter into a bounded epoch.
+ *
+ * JSON Schema already enforces date-time shape. This rejects values that pass
+ * that check but are not representable instants, so an unusable point in time
+ * can never silently widen the traversal to current state.
+ */
+function parseAsOf(value: string): number {
+  const parsed = Date.parse(value);
+
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0
+  ) {
+    throw new ApiError(
+      "INVALID_ANALYSIS_AS_OF",
+      400,
+      "asOf must be a representable nonnegative date-time.",
+    );
+  }
+
+  return parsed;
 }
 
 function evidenceFunnelOptions(

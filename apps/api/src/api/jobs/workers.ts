@@ -7,6 +7,10 @@ import {
   collectPackageLock,
 } from "../../ingest/lockfile/collector.js";
 
+import type {
+  LockfileSnapshotCloser,
+} from "../../ingest/lockfile/snapshot-store.js";
+
 import {
   orchestrateNpmIngestion,
 } from "../../ingest/npm/orchestrator.js";
@@ -89,6 +93,16 @@ export interface IngestionWorkerDependencies {
     TyposquattingService,
     "scanLockfile"
   >;
+
+  /**
+   * Optional lockfile history writer. It closes the previous open snapshot for
+   * a service once the new snapshot has been verifiably persisted.
+   *
+   * Keeping it optional preserves focused ingestion fixtures that do not
+   * exercise temporal history.
+   */
+  readonly lockfileSnapshots?:
+    LockfileSnapshotCloser;
 
   /**
    * Trusted npm registry configuration.
@@ -572,6 +586,50 @@ export function createLockfileIngestionWorker(
         context,
         batch,
       );
+
+      /*
+       * Closing the previous snapshot is what converts a sequence of
+       * ingestions into queryable history. It runs only after verified
+       * persistence, so a failed write can never close a still-valid state.
+       *
+       * A failure here leaves the earlier snapshot open. That reads as
+       * overlapping history rather than as a gap, which keeps temporal
+       * answers conservative instead of silently dropping exposure.
+       */
+      if (
+        dependencies.lockfileSnapshots !==
+        undefined
+      ) {
+        throwIfAborted(context.signal);
+
+        try {
+          await dependencies
+            .lockfileSnapshots
+            .closeSupersededSnapshots({
+              serviceId:
+                collected.serviceId,
+              currentSnapshotId:
+                collected.snapshotId,
+              closedAt: collected.validFrom,
+            });
+        } catch (error: unknown) {
+          void error;
+
+          partiallyCompleteJob(
+            dependencies,
+            context,
+            batch,
+            [
+              "SNAPSHOT_HISTORY_NOT_CLOSED",
+              ...(collected.issues.length > 0
+                ? ["PARTIAL_COLLECTION" as const]
+                : []),
+            ],
+          );
+
+          return;
+        }
+      }
 
       /*
        * Detection is deliberately downstream of verified lockfile

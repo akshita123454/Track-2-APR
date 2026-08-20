@@ -156,6 +156,12 @@ function hasAllowedEndpoints(
 
     case "IMITATES":
       return sourceKind === "Finding" && targetKind === "Package";
+
+    case "RESOLVED_IN":
+      return (
+        sourceKind === "LockfileSnapshot" &&
+        targetKind === "PackageVersion"
+      );
   }
 }
 
@@ -367,6 +373,58 @@ export function validateGraph(
       nodeIdByLogicalId.set(node.logicalId, node.id);
     }
 
+    if (node.kind === "LockfileSnapshot") {
+      if (!isValidId(node.serviceId)) {
+        errors.push(
+          `LockfileSnapshot node ${node.id} has an invalid serviceId`,
+        );
+      }
+
+      if (!/^[0-9a-f]{64}$/.test(node.contentSha256)) {
+        errors.push(
+          `LockfileSnapshot node ${node.id} contentSha256 must be ` +
+            `lowercase hex sha256`,
+        );
+      }
+
+      if (
+        node.lockfileVersion !== 1 &&
+        node.lockfileVersion !== 2 &&
+        node.lockfileVersion !== 3
+      ) {
+        errors.push(
+          `LockfileSnapshot node ${node.id} has unsupported lockfileVersion`,
+        );
+      }
+
+      if (!isValidTimestamp(node.validFrom)) {
+        errors.push(
+          `LockfileSnapshot node ${node.id} has invalid validFrom`,
+        );
+      }
+
+      if (node.validUntil !== null) {
+        if (!isValidTimestamp(node.validUntil)) {
+          errors.push(
+            `LockfileSnapshot node ${node.id} has invalid validUntil`,
+          );
+        } else if (node.validUntil < node.validFrom) {
+          errors.push(
+            `LockfileSnapshot node ${node.id} validUntil precedes validFrom`,
+          );
+        }
+      }
+
+      if (
+        node.commitSha !== undefined &&
+        !isNonemptyText(node.commitSha)
+      ) {
+        errors.push(
+          `LockfileSnapshot node ${node.id} has an empty commitSha`,
+        );
+      }
+    }
+
     if (node.kind === "Finding") {
       const requiredText = [
         node.detectorVersion,
@@ -576,6 +634,68 @@ export function validateGraph(
 
       if (!hasValidTransformations(edge.transformations)) {
         errors.push(`LOOKALIKE_OF edge ${edge.id} has invalid transformations`);
+      }
+    }
+
+    if (edge.kind === "DEPENDS_ON") {
+      if (
+        edge.validFrom !== undefined &&
+        !isValidTimestamp(edge.validFrom)
+      ) {
+        errors.push(
+          `DEPENDS_ON edge ${edge.id} has invalid validFrom`,
+        );
+      }
+
+      if (edge.validUntil !== undefined) {
+        if (!isValidTimestamp(edge.validUntil)) {
+          errors.push(
+            `DEPENDS_ON edge ${edge.id} has invalid validUntil`,
+          );
+        } else if (
+          edge.validFrom !== undefined &&
+          edge.validUntil < edge.validFrom
+        ) {
+          errors.push(
+            `DEPENDS_ON edge ${edge.id} validUntil precedes validFrom`,
+          );
+        }
+      }
+
+      /*
+       * A closing timestamp without an opening one cannot be placed on the
+       * time axis, so it would silently read as "unknown" while looking
+       * temporally precise.
+       */
+      if (
+        edge.validUntil !== undefined &&
+        edge.validFrom === undefined
+      ) {
+        errors.push(
+          `DEPENDS_ON edge ${edge.id} declares validUntil without validFrom`,
+        );
+      }
+
+      if (edge.snapshotId !== undefined) {
+        if (!isValidId(edge.snapshotId)) {
+          errors.push(
+            `DEPENDS_ON edge ${edge.id} has an invalid snapshotId`,
+          );
+        } else {
+          const snapshot = nodesById.get(edge.snapshotId);
+
+          if (snapshot === undefined) {
+            errors.push(
+              `DEPENDS_ON edge ${edge.id} references missing ` +
+                `LockfileSnapshot ${edge.snapshotId}`,
+            );
+          } else if (snapshot.kind !== "LockfileSnapshot") {
+            errors.push(
+              `DEPENDS_ON edge ${edge.id} snapshotId ${edge.snapshotId} is ` +
+                `${snapshot.kind}, not LockfileSnapshot`,
+            );
+          }
+        }
       }
     }
 
