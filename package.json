@@ -1,0 +1,13 @@
+{
+  "name": "hydraguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-first supply-chain blast radius and containment engine built on HydraDB.",
+  "scripts": {
+    "setup": "npm install --prefix apps/api && npm install --prefix dashboard",
+    "demo": "npm run dev --prefix dashboard",
+    "api": "npm start --prefix apps/api",
+    "verify": "npm run validate:all --prefix apps/api",
+    "contract": "docker run --rm -p 8080:8080 -e SWAGGER_JSON=/spec/openapi.yaml -v \"%CD%/contracts:/spec\" swaggerapi/swagger-ui"
+  }
+}

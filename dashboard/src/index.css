@@ -78,3 +78,91 @@
     text-wrap: balance;
   }
 }
+
+/* ==========================================================================
+   Evidence Console theme — HydraDB-style black canvas with ember accent.
+   ========================================================================== */
+
+@layer components {
+  .hg-shell {
+    background-color: #000;
+    background-image:
+      radial-gradient(900px 420px at 82% -8%, rgba(255, 91, 26, 0.16), transparent 60%),
+      radial-gradient(700px 360px at 6% 0%, rgba(255, 160, 40, 0.07), transparent 60%),
+      linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+    background-size: auto, auto, 46px 46px, 46px 46px;
+  }
+
+  .hg-panel {
+    @apply border border-hg-line bg-hg-panel/85;
+    backdrop-filter: blur(3px);
+  }
+
+  .hg-kicker {
+    @apply inline-flex items-center gap-2 font-display text-[10px] uppercase tracking-[0.32em] text-hg-ember;
+  }
+
+  .hg-title {
+    @apply font-display font-medium tracking-tight text-hg-bone;
+  }
+
+  /* Orange corner brackets, as used on the HydraDB stat cards. */
+  .hg-bracket { position: relative; }
+  .hg-bracket::before,
+  .hg-bracket::after {
+    content: '';
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    border-color: #ff5b1a;
+    border-style: solid;
+  }
+  .hg-bracket::before {
+    top: -1px; left: -1px;
+    border-width: 2px 0 0 2px;
+  }
+  .hg-bracket::after {
+    bottom: -1px; right: -1px;
+    border-width: 0 2px 2px 0;
+  }
+
+  .hg-cta {
+    @apply inline-flex items-center gap-2 bg-hg-ember px-4 py-2 font-display text-sm font-medium text-black transition-colors;
+  }
+  .hg-cta:hover { background-color: #ff7a33; }
+
+  .hg-ghost {
+    @apply inline-flex items-center gap-2 border border-hg-line bg-transparent px-4 py-2 font-display text-sm text-hg-bone transition-colors;
+  }
+  .hg-ghost:hover { border-color: #ff5b1a; color: #ff7a33; }
+
+  .hg-nav {
+    @apply flex w-full items-center gap-2.5 border-l-2 border-transparent px-4 py-2.5 text-left text-sm text-hg-ash transition-colors;
+  }
+  .hg-nav:hover { color: #ededf0; background-color: rgba(255, 255, 255, 0.028); }
+  .hg-nav-on {
+    border-left-color: #ff5b1a;
+    color: #ededf0;
+    background-color: rgba(255, 91, 26, 0.09);
+  }
+
+  .hg-chip {
+    @apply inline-flex items-center gap-1.5 border border-hg-line px-2 py-0.5 font-display text-[10px] uppercase tracking-widest text-hg-ash;
+  }
+
+  .hg-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full;
+    box-shadow: 0 0 8px currentColor;
+  }
+
+  .hg-scan {
+    background: linear-gradient(90deg, transparent, rgba(255, 91, 26, 0.75), transparent);
+    animation: hg-scan 2.1s linear infinite;
+  }
+}
+
+@keyframes hg-scan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}

@@ -12,3 +12,5 @@ build/
 hydradb-data/
 hydradb-e2e-data/
 hydradb-phase10-data/
+hydradb-diag/
+hydradb-probe/

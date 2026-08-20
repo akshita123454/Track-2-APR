@@ -13,6 +13,7 @@ import { EmptyState } from './components/EmptyState';
 import { NoServiceState } from './components/NoServiceState';
 import { useBlastRadius } from './hooks/useBlastRadius';
 import { TyposquattingView } from './components/TyposquattingView';
+import { ConsoleShell } from './console/ConsoleShell';
 
 function getInitialIncidentId(): number | null {
   const raw = new URLSearchParams(window.location.search).get('incidentId');
@@ -35,7 +36,18 @@ function getInitialView(): 'incidents' | 'findings' {
     : 'incidents';
 }
 
+/**
+ * The Evidence Console is the default entry point: it explains the system and
+ * never depends on a reachable database, so a demo always has something to show.
+ * ?view=incidents or ?view=findings opens the live data dashboard directly.
+ */
+function getInitialSurface(): 'console' | 'dashboard' {
+  const view = new URLSearchParams(window.location.search).get('view');
+  return view === 'incidents' || view === 'findings' ? 'dashboard' : 'console';
+}
+
 export default function App() {
+  const [surface, setSurface] = useState<'console' | 'dashboard'>(getInitialSurface);
   const [view, setView] = useState<'incidents' | 'findings'>(getInitialView);
   const [findingId, setFindingId] = useState<number | null>(getInitialFindingId);
   const [incidentId, setIncidentId] = useState<number | null>(getInitialIncidentId);
@@ -64,6 +76,10 @@ export default function App() {
     setSelectedServiceId(null);
     setSelectedPathKey(null);
   };
+
+  if (surface === 'console') {
+    return <ConsoleShell onExit={() => setSurface('dashboard')} />;
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
