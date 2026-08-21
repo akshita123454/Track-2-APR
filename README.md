@@ -782,13 +782,11 @@ A successful result confirms that HydraGuard's core analysis, persistence, API, 
 
 ---
 
-# Demo Video and Dashboard
+# Demo Video 
 
 🎥 **YouTube Demo Video:**
 [Watch the HydraGuard demo](https://youtu.be/QQAJx8dwNyI?si=fRTIx5d0YHWyYYEM)
 
-🖥️ **Live Dashboard / Evidence Console:**
-[Add your dashboard link here](YOUR_DASHBOARD_LINK)
 
 ---
 
