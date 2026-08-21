@@ -600,23 +600,6 @@ Copyright © 2026 Akshita, Pratik Raj.
 
 # Run HydraGuard
 
-## Quick Demo — Evidence Console Only
-
-This is the fastest way to review the HydraGuard interface. It uses the built-in demo experience and does not require Docker or a live HydraDB connection.
-
-```powershell
-npm run setup
-npm run demo
-```
-
-Then open:
-
-```text
-http://localhost:5173
-```
-
----
-
 ## Full Stack — Console, API, and HydraDB
 
 Use this mode to run the live API with a real HydraDB graph database.
