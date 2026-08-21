@@ -585,15 +585,16 @@ The Release Influence Firewall validation confirms:
 
 ---
 
-# License
+## 📄 License
 
-HydraGuard is licensed under the **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)**.
+HydraGuard is released under the **MIT License**.
 
-This means the project can be used, studied, modified, and shared under the same open-source terms. If someone modifies HydraGuard and provides it as a network-accessible service, they must also make the corresponding source code available under the AGPL.
+The MIT License allows developers, researchers, and the HydraDB community to use, study, modify, distribute, and integrate HydraGuard with minimal restrictions, while preserving the copyright and license notice.
 
-See the complete [GNU Affero General Public License v3.0 or later](License).
+See the complete [MIT License](License).
 
-Copyright © 2026 Akshita, Pratik Raj
+Copyright © 2026 Akshita, Pratik Raj.
+
 
 ---
 
