@@ -600,22 +600,27 @@ Copyright © 2026 Akshita, Pratik Raj.
 
 # Run HydraGuard
 
-## Full Stack — Console, API, and HydraDB
+## Full Stack — HydraDB, API, and Evidence Console
 
-Use this mode to run the live API with a real HydraDB graph database.
+Use these steps to run the complete HydraGuard application locally on Windows with PowerShell.
 
-### Prerequisites
+### Requirements
 
 Install:
 
 - Node.js 20 or later
 - npm
-- Docker Desktop, if HydraDB runs locally in Docker
-- Access to a HydraDB instance using the Bolt protocol
+- Docker Desktop
+
+Before continuing, open Docker Desktop and wait until it shows:
+
+```text
+Engine running
+```
 
 ### 1. Install dependencies
 
-From the project root:
+Open PowerShell in the project root:
 
 ```powershell
 npm run setup
@@ -623,79 +628,89 @@ npm run setup
 
 ### 2. Start HydraDB
 
-Start a HydraDB instance before starting the API.
+Run the following commands from the project root.
 
-If you run HydraDB with Docker, open Docker Desktop and wait until it shows:
+```powershell
+New-Item -ItemType Directory -Force -Path "hydradb-data\store", "hydradb-data\cache"
 
-```text
-Engine running
+Set-Content -NoNewline `
+  -Path "hydradb-data\auth-token" `
+  -Value "local-development-token-32-bytes"
 ```
 
-Then start your HydraDB container using the command or Docker configuration supplied with your HydraDB installation.
+For a first-time setup, start HydraDB:
 
-Confirm that the HydraDB container is running:
+```powershell
+docker run -d --name hydradb-local `
+  -p 7687:7687 `
+  -p 8443:8443 `
+  -p 9090:9090 `
+  -v "${PWD}\hydradb-data:/data" `
+  -e CLOUD_PROVIDER=local `
+  -e LOCAL_PATH=/data/store `
+  -e GRAPH_NAMESPACE=default `
+  -e GRAPH_ID=default `
+  -e GRAPH_CELL_ID=cell-0 `
+  -e GRAPH_CELLS=cell-0 `
+  -e GRAPH_NODE_ID=node-0 `
+  -e GRAPH_BOLT_NODE_ADDRESSES=node-0=127.0.0.1:7687 `
+  -e GRAPH_ADVERTISED_BOLT_ADDR=127.0.0.1:7687 `
+  -e GRAPH_DATA_CACHE_DIR=/data/cache `
+  -e GRAPH_AUTH_TOKEN_FILE=/data/auth-token `
+  -e GRAPH_ALLOW_PLAINTEXT=true `
+  -e RUST_MIN_STACK=33554432 `
+  ghcr.io/hydra-db/hydradb:latest
+```
+
+> The first run downloads the HydraDB image and can take a few minutes.
+
+Verify that HydraDB is running:
 
 ```powershell
 docker ps
 ```
 
-> Docker Desktop being open is not enough. The HydraDB database container must also be running.
-
-### 3. Get your HydraDB connection details
-
-The API connects to HydraDB using these values:
-
-| Variable | Meaning |
-|---|---|
-| `HYDRADB_URI` | Bolt connection address, for example `bolt://127.0.0.1:27687` |
-| `HYDRADB_USER` | HydraDB username |
-| `HYDRADB_TOKEN` | Password or access token configured for HydraDB |
-
-If HydraDB runs locally in Docker, the URI must use the Bolt port exposed by the container.
-
-For example:
+The output should include `hydradb-local` and a mapping similar to:
 
 ```text
-bolt://127.0.0.1:27687
+0.0.0.0:7687->7687/tcp
 ```
 
-or:
-
-```text
-bolt://127.0.0.1:27688
-```
-
-> Use the host, port, username, and token configured for your own HydraDB instance.
-
-### 4. Configure and start the API
-
-Open a PowerShell terminal in the project root. Replace the placeholder values with your HydraDB connection details:
+If `hydradb-local` already exists but is stopped, start it with:
 
 ```powershell
-$env:HYDRADB_URI = "bolt://YOUR-HYDRADB-HOST:YOUR-BOLT-PORT"
-$env:HYDRADB_USER = "YOUR-HYDRADB-USERNAME"
-$env:HYDRADB_TOKEN = "YOUR-HYDRADB-PASSWORD-OR-TOKEN"
-
-npm run api
+docker start hydradb-local
 ```
 
-Example for a local HydraDB instance:
+If the HydraDB container fails to start, inspect its logs:
 
 ```powershell
-$env:HYDRADB_URI = "bolt://127.0.0.1:27687"
+docker logs hydradb-local
+```
+
+### 3. Start the HydraGuard API
+
+Open a **new PowerShell terminal** in the project root and run:
+
+```powershell
+$env:HYDRADB_URI = "bolt://127.0.0.1:7687"
 $env:HYDRADB_USER = "neo4j"
-$env:HYDRADB_TOKEN = "your-local-hydradb-token"
+$env:HYDRADB_TOKEN = "local-development-token-32-bytes"
 
 npm run api
 ```
 
-Keep this terminal running.
+Keep this terminal open. It should display:
 
-> PowerShell environment variables apply only to the terminal where they are set. Run `npm run api` in the same terminal as the three `$env:` commands.
+```text
+Server listening at http://127.0.0.1:3000
+```
 
-### 5. Verify API and database readiness
+> PowerShell environment variables apply only to the terminal where they are set. Always run `npm run api` in the same terminal as the three `$env:` commands.
 
-Open a second PowerShell terminal and run:
+### 4. Verify API and database readiness
+
+Open another PowerShell terminal and run:
 
 ```powershell
 Invoke-RestMethod http://localhost:3000/ready
@@ -707,7 +722,7 @@ Expected result:
 database: available
 ```
 
-You can also verify that the API process is running:
+Check API liveness:
 
 ```powershell
 Invoke-RestMethod http://localhost:3000/health
@@ -719,24 +734,37 @@ Expected result:
 status: ok
 ```
 
-### 6. Start the Evidence Console
+### 5. Start the Evidence Console
 
-Open a third PowerShell terminal in the project root:
+Open another PowerShell terminal in the project root:
 
 ```powershell
 npm run demo
 ```
 
-Then open:
+Open the console in your browser:
 
 ```text
 http://localhost:5173
 ```
 
+### Stop the Local Stack
+
+Stop the API and dashboard terminals with:
+
+```text
+Ctrl + C
+```
+
+Stop HydraDB:
+
+```powershell
+docker stop hydradb-local
+```
+
 ---
 
-## Run the Verification Su
-.0ite
+## Run the Verification Suite
 
 Run the automated verification suite with:
 
