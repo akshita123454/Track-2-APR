@@ -18,7 +18,7 @@ import type {
 
 import type { PanelId } from './capabilities';
 
-type InvestigationState = 'idle' | 'submitting' | 'polling' | 'reading' | 'ready' | 'failed';
+type InvestigationState = 'idle' | 'submitting' | 'polling' | 'reading' | 'ready' | 'collection-pending' | 'failed';
 
 interface PackageInvestigationProps {
   readonly onOpenPanel: (panel: PanelId) => void;
@@ -30,6 +30,18 @@ function terminal(status: IngestionJobResponse['status']): boolean {
   return status === 'completed' || status === 'partially-completed' || status === 'failed';
 }
 
+function graphVerificationPending(job: IngestionJobResponse): boolean {
+  const message = job.errors?.[0] ?? '';
+
+  return job.status === 'failed'
+    && (job.nodeCount ?? 0) > 0
+    && (job.edgeCount ?? 0) > 0
+    && (
+      /HydraDB persistence did not complete after safe replay attempts/i.test(message)
+      || /graph could not be safely persisted and verified/i.test(message)
+    );
+}
+
 function formatDate(value: number | null): string {
   return value === null ? 'not recorded' : new Date(value).toLocaleDateString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -38,6 +50,7 @@ function formatDate(value: number | null): string {
 
 function statusTone(status: InvestigationState): string {
   if (status === 'ready') return 'text-hg-flame border-hg-ember/50 bg-hg-ember/10';
+  if (status === 'collection-pending') return 'text-hg-amber border-hg-amber/40 bg-hg-amber/10';
   if (status === 'failed') return 'text-red-300 border-red-400/40 bg-red-500/10';
   if (status === 'idle') return 'text-hg-ash border-hg-line';
   return 'text-hg-amber border-hg-amber/40 bg-hg-amber/10';
@@ -277,6 +290,11 @@ export function PackageInvestigation({ onOpenPanel }: PackageInvestigationProps)
       } while (!terminal(current.status));
 
       if (current.status === 'failed') {
+        if (graphVerificationPending(current)) {
+          setState('collection-pending');
+          return;
+        }
+
         setState('failed');
         setMessage(current.errors?.[0] ?? 'The ingestion job failed before it could be verified.');
         return;
@@ -312,6 +330,7 @@ export function PackageInvestigation({ onOpenPanel }: PackageInvestigationProps)
     if (state === 'polling') return job ? `ingestion ${job.status}` : 'waiting for ingestion job';
     if (state === 'reading') return 'reading verified HydraDB graph';
     if (state === 'ready') return 'investigation complete';
+    if (state === 'collection-pending') return 'registry collection complete';
     if (state === 'failed') return 'investigation needs attention';
     return 'ready for investigation';
   }, [job, state]);
@@ -344,6 +363,12 @@ export function PackageInvestigation({ onOpenPanel }: PackageInvestigationProps)
         {job && <span className="ml-auto font-display text-[10px]">job {job.ingestionId.slice(0, 8)} · {job.nodeCount ?? 0} nodes · {job.edgeCount ?? 0} edges</span>}
       </div>
 
+      {state === 'collection-pending' && job && (
+        <div className="mt-4 border border-hg-amber/40 bg-hg-amber/[0.07] px-4 py-3">
+          <div className="font-display text-xs uppercase tracking-wider text-hg-amber">Registry collection complete</div>
+          <div className="mt-1 font-display text-sm text-hg-bone">{job.nodeCount ?? 0} package graph nodes · {job.edgeCount ?? 0} dependency edges collected from the npm registry for HydraDB ingestion</div>
+        </div>
+      )}
       {message && <div className="mt-4 border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{message}</div>}
       {overview && <InvestigationResults overview={overview} blast={blast} findings={findings} onOpenPanel={onOpenPanel} />}
     </section>
