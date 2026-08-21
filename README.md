@@ -599,9 +599,12 @@ Copyright © 2026 Akshita, Pratik Raj
 
 # Run HydraGuard
 
-## Quick Dashboard Demo
+## Quick Demo — Evidence Console Only
 
-```bash
+This is the fastest way to review the HydraGuard interface. It uses the built-in demo experience and does not require Docker or a live HydraDB connection.
+
+```powershell
+npm run setup
 npm run demo
 ```
 
@@ -611,40 +614,170 @@ Then open:
 http://localhost:5173
 ```
 
-## Full Local Stack
+---
 
-1. Install dependencies:
+## Full Stack — Console, API, and HydraDB
 
-```bash
+Use this mode to run the live API with a real HydraDB graph database.
+
+### Prerequisites
+
+Install:
+
+- Node.js 20 or later
+- npm
+- Docker Desktop, if HydraDB runs locally in Docker
+- Access to a HydraDB instance using the Bolt protocol
+
+### 1. Install dependencies
+
+From the project root:
+
+```powershell
 npm run setup
 ```
 
-2. Create environment configuration:
+### 2. Start HydraDB
 
-```bash
-cp .env.example .env
+Start a HydraDB instance before starting the API.
+
+If you run HydraDB with Docker, open Docker Desktop and wait until it shows:
+
+```text
+Engine running
 ```
 
-3. Add HydraDB connection settings to `.env`.
+Then start your HydraDB container using the command or Docker configuration supplied with your HydraDB installation.
 
-4. Start the API:
+Confirm that the HydraDB container is running:
 
-```bash
+```powershell
+docker ps
+```
+
+> Docker Desktop being open is not enough. The HydraDB database container must also be running.
+
+### 3. Get your HydraDB connection details
+
+The API connects to HydraDB using these values:
+
+| Variable | Meaning |
+|---|---|
+| `HYDRADB_URI` | Bolt connection address, for example `bolt://127.0.0.1:27687` |
+| `HYDRADB_USER` | HydraDB username |
+| `HYDRADB_TOKEN` | Password or access token configured for HydraDB |
+
+If HydraDB runs locally in Docker, the URI must use the Bolt port exposed by the container.
+
+For example:
+
+```text
+bolt://127.0.0.1:27687
+```
+
+or:
+
+```text
+bolt://127.0.0.1:27688
+```
+
+> Use the host, port, username, and token configured for your own HydraDB instance.
+
+### 4. Configure and start the API
+
+Open a PowerShell terminal in the project root. Replace the placeholder values with your HydraDB connection details:
+
+```powershell
+$env:HYDRADB_URI = "bolt://YOUR-HYDRADB-HOST:YOUR-BOLT-PORT"
+$env:HYDRADB_USER = "YOUR-HYDRADB-USERNAME"
+$env:HYDRADB_TOKEN = "YOUR-HYDRADB-PASSWORD-OR-TOKEN"
+
 npm run api
 ```
 
-5. Start the dashboard:
+Example for a local HydraDB instance:
 
-```bash
+```powershell
+$env:HYDRADB_URI = "bolt://127.0.0.1:27687"
+$env:HYDRADB_USER = "neo4j"
+$env:HYDRADB_TOKEN = "your-local-hydradb-token"
+
+npm run api
+```
+
+Keep this terminal running.
+
+> PowerShell environment variables apply only to the terminal where they are set. Run `npm run api` in the same terminal as the three `$env:` commands.
+
+### 5. Verify API and database readiness
+
+Open a second PowerShell terminal and run:
+
+```powershell
+Invoke-RestMethod http://localhost:3000/ready
+```
+
+Expected result:
+
+```text
+database: available
+```
+
+You can also verify that the API process is running:
+
+```powershell
+Invoke-RestMethod http://localhost:3000/health
+```
+
+Expected result:
+
+```text
+status: ok
+```
+
+### 6. Start the Evidence Console
+
+Open a third PowerShell terminal in the project root:
+
+```powershell
 npm run demo
 ```
 
-6. Verify the stack:
+Then open:
 
 ```text
-http://localhost:3000/health
-http://localhost:3000/ready
+http://localhost:5173
 ```
+
+---
+
+## Run the Verification Su
+.0ite
+
+Run the automated verification suite with:
+
+```powershell
+npm run verify
+```
+
+This runs the TypeScript type check and the deterministic validation suites for the core HydraGuard capabilities:
+
+- Package, version, dependency, and graph-data validation
+- Lockfile ingestion and temporal dependency-history reasoning
+- Graph-batch persistence and persistence-service behaviour
+- Asynchronous job management and worker dispatch
+- Blast-radius analysis and proof-path generation
+- Authority-pivot and second-wave propagation analysis
+- Containment planning and remediation logic
+- Release-trust firewall decisions: allow, quarantine, and block
+- Typosquatting detection, graph contracts, orchestration, and analyst review lifecycle
+- Live API route and server validation
+
+The suite is designed to test both successful flows and security-sensitive failure cases, including malformed facts, missing evidence, invalid graph data, temporal boundary conditions, persistence failures, and authorization-sensitive analyst actions.
+
+A successful result confirms that HydraGuard's core analysis, persistence, API, and fail-closed validation logic are working as expected.
+
+> `npm run verify` validates the application logic locally. The `/ready` endpoint is the final check that confirms the API can reach a running HydraDB instance.
 
 ---
 
